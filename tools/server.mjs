@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectUsage } from './usage.mjs';
-import { dispatch, getRun, stopRun, listRuns, readLog } from './dispatch.mjs';
+import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns } from './dispatch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
@@ -20,12 +20,38 @@ function parse(file) {
 function save(t) {
   const { id, body, ...meta } = t;
   meta.updated = new Date().toISOString().slice(0, 10);
-  const fm = ['title', 'status', 'agent', 'priority', 'updated'].map(k => `${k}: ${meta[k] ?? ''}`).join('\n');
+  // files 是可選欄位:只有真的有值時才寫進 frontmatter,避免幫從沒填過 files
+  // 的舊任務憑空多出一行空的 `files: `。
+  const fields = ['title', 'status', 'agent', 'priority'];
+  if (meta.files) fields.push('files');
+  fields.push('updated');
+  const fm = fields.map(k => `${k}: ${meta[k] ?? ''}`).join('\n');
   fs.writeFileSync(path.join(tasksDir, id + '.md'), `---\n${fm}\n---\n${body}`);
 }
 const list = () => fs.readdirSync(tasksDir).filter(f => f.endsWith('.md')).map(parse);
 const send = (res, code, data, type = 'application/json') => { res.writeHead(code, { 'content-type': type }); res.end(type === 'application/json' ? JSON.stringify(data) : data); };
 const readBody = req => new Promise(r => { let s = ''; req.on('data', c => (s += c)); req.on('end', () => r(JSON.parse(s || '{}'))); });
+
+// --- 任務衝突防呆:任務可選填 files(逗號分隔的相對路徑/目錄前綴),派工前
+// 檢查是否跟目前「執行中」的其他任務宣告的 files 重疊。比對規則簡單:正規化後
+// 完全相同,或其中一個是另一個的目錄前綴,就算衝突。沒填 files 的任務不受影響。
+const normPath = p => String(p).trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+const parseFiles = str => String(str || '').split(',').map(normPath).filter(Boolean);
+const filesConflict = (a, b) => a === b || a.startsWith(b + '/') || b.startsWith(a + '/');
+function findFileConflict(id, files) {
+  if (!files.length) return null;
+  for (const r of listActiveRuns()) {
+    if (r.id === id) continue;
+    const otherFilePath = path.join(tasksDir, r.id + '.md');
+    if (!fs.existsSync(otherFilePath)) continue;
+    const other = parse(r.id + '.md');
+    const otherFiles = parseFiles(other.files);
+    for (const f of files) for (const of_ of otherFiles) {
+      if (filesConflict(f, of_)) return { id: r.id, title: other.title, file: f };
+    }
+  }
+  return null;
+}
 
 http.createServer(async (req, res) => {
   try {
@@ -33,8 +59,21 @@ http.createServer(async (req, res) => {
     if (url.pathname === '/api/config') return send(res, 200, cfg());
     if (url.pathname === '/api/tasks' && req.method === 'GET') return send(res, 200, list());
     if (url.pathname === '/api/dispatch' && req.method === 'POST') {
-      const { id } = await readBody(req);
+      const { id, force } = await readBody(req);
       if (!/^[\w-]+$/.test(id || '')) return send(res, 400, { error: 'bad id' });
+      if (!force) {
+        const file = path.join(tasksDir, id + '.md');
+        if (fs.existsSync(file)) {
+          const task = parse(id + '.md');
+          const conflict = findFileConflict(id, parseFiles(task.files));
+          if (conflict) {
+            return send(res, 409, {
+              error: `檔案衝突:「${task.title}」跟正在執行中的任務「${conflict.title}」(${conflict.id}) 都會動到 ${conflict.file}。要照樣派工請帶 force。`,
+              conflict,
+            });
+          }
+        }
+      }
       try { return send(res, 200, dispatch(id)); } catch (e) { return send(res, 400, { error: e.message }); }
     }
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
@@ -45,7 +84,7 @@ http.createServer(async (req, res) => {
       const file = path.join(tasksDir, id + '.md');
       const cur = fs.existsSync(file) ? parse(id + '.md') : { id, title: 'Untitled', status: 'backlog', agent: '', priority: 'p1', body: '\n\n## Log\n' };
       const next = { ...cur };
-      for (const k of ['title', 'status', 'agent', 'priority']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
+      for (const k of ['title', 'status', 'agent', 'priority', 'files']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
       save(next);
       return send(res, 200, parse(id + '.md'));
     }
