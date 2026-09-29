@@ -47,8 +47,14 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .modalhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
 .modalhead .mut{font-size:12px}
 #logContent{overflow:auto;flex:1;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;margin:0;border:1px solid var(--line)}
+.warn{font-size:12px;color:var(--danger)}
+.ptag{font-size:11px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+.form{display:flex;flex-direction:column;gap:8px}.form label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--mut)}
+.form input,.form textarea{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+.plist{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;overflow:auto}
+.plist .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
 </style>
-<h1>Multi-Agent Workboard <button id=add>+ 新任務</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
+<h1>Multi-Agent Workboard <button id=add>+ 新任務</button> <button id=projBtn>📂 專案</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
 <div class=usage id=usage></div>
 <h2>看板</h2><div class=cols id=cols></div>
 <div class=modal id=logModal hidden>
@@ -57,11 +63,36 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
     <pre id=logContent></pre>
   </div>
 </div>
+<div class=modal id=taskModal hidden>
+  <div class=modalbox>
+    <div class=modalhead><b>新任務</b><button id=taskClose>✕ 關閉</button></div>
+    <div class=form>
+      <label>標題<input id=fTitle></label>
+      <label>專案<select id=fProject></select></label>
+      <label>目標(goal)<textarea id=fGoal rows=2></textarea></label>
+      <label>驗收條件(acceptance,用 ; 分隔)<textarea id=fAcc rows=2></textarea></label>
+      <label>會動到的檔案(逗號分隔,可留空)<input id=fFiles placeholder="tools/usage.mjs,web/index.html"></label>
+      <div class=row><button id=taskSave data-primary>建立</button></div>
+    </div>
+  </div>
+</div>
+<div class=modal id=projModal hidden>
+  <div class=modalbox>
+    <div class=modalhead><b>專案管理</b><button id=projClose>✕ 關閉</button></div>
+    <div class=plist id=projList></div>
+    <div class=form>
+      <label>id(英數、_、-)<input id=pId></label>
+      <label>名稱<input id=pName></label>
+      <label>路徑(存在的絕對路徑)<input id=pPath placeholder="D:/MyProject/xxx"></label>
+      <div class=row><button id=projSave>新增專案</button></div>
+    </div>
+  </div>
+</div>
 <script>
 const $=s=>document.querySelector(s),api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
 const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':n;
 const STATUS_LABEL={running:'執行中',exited:'已完成',failed:'失敗',error:'啟動失敗',stopped:'已停止',unknown:'狀態未知',none:'尚未派工過'};
-let cfg,tasks=[],runStatus={},openLogId=null,userStopping={};
+let cfg,tasks=[],projects=[],runStatus={},openLogId=null,userStopping={};
 function beep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
  o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(ctx.currentTime+.15);
  setTimeout(()=>{try{ctx.close()}catch(e){}},300)}catch(e){}}
@@ -81,7 +112,7 @@ function checkRunTransitions(prevRun){Object.keys(prevRun).forEach(id=>{const wa
  if(now==='stopped')notify('任務已停止','『'+title+'』已被手動停止');
  else if(now==='failed'||now==='error')notify('任務失敗','『'+title+'』執行失敗,請查看 log')})}
 async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
- cfg??=await api('config');tasks=await api('tasks');render();checkTaskTransitions(prevStatus);
+ cfg??=await api('config');projects=await api('projects');tasks=await api('tasks');render();checkTaskTransitions(prevStatus);
  api('usage').then(u=>{$('#usage').innerHTML=u.map(a=>{const mx=Math.max(1,...a.days.map(d=>d.total));
   return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
   <div class=big>${fmt(a.today)} <span class=mut>今日</span></div>
@@ -92,10 +123,17 @@ async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.s
   :`<div class=mut>${a.enabled===false?'未設定(已停用)':'未設定 / 尚無使用記錄'}</div>`}</div>`}).join('')})}
 function badge(t){const r=runStatus[t.id];if(!r||r.status==='none')return '';
  return `<span class="badge b-${r.status}">${STATUS_LABEL[r.status]||r.status}</span>`}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function projLine(t){if(!t.project)return '<div class=warn>⚠ 未綁定專案:會在看板 repo 內執行</div>';
+ const p=projects.find(x=>x.id===t.project);
+ if(!p)return `<div class=warn>⚠ 專案「${esc(t.project)}」不存在,無法派工</div>`;
+ return `<div class=row><span class=ptag>📂 ${esc(p.name||p.id)}</span>${p.valid?'':'<span class=warn>⚠ 路徑失效,無法派工</span>'}</div>`}
 function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
  tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
  <div class=row><select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
  <span class=mut>${t.priority}</span> ${badge(t)}</div>
+ ${projLine(t)}
+ ${t.goal?`<div class=mut>🎯 ${esc(t.goal)}</div>`:''}
  ${t.files?`<div class=mut>📁 ${t.files}</div>`:''}
  <div class=row>${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}
  ${runStatus[t.id]?.status==='running'?`<button class="iconbtn stop" data-stop=${t.id}>■ 停止</button>`:''}
@@ -125,11 +163,23 @@ document.addEventListener('click',async e=>{
   if(r.error){alert(r.error)}else{await load();openLog(run)}};
   await dispatchNow(false);return}
  if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
+ const pdel=e.target.dataset?.pdel;
+ if(pdel){if(!confirm('刪除專案「'+pdel+'」?(不會刪除該資料夾;綁定它的任務會變成無法派工)'))return;const r=await api('projects/'+encodeURIComponent(pdel),{method:'DELETE'});if(r.error)alert(r.error);await load();paintProjects();return}
  if(logId){openLog(logId);return}
  if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
 });
-document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
-$('#add').onclick=()=>{const t=prompt('任務標題');if(!t)return;const f=prompt('會動到哪些檔案?(逗號分隔,可留空,例如 tools/usage.mjs,web/index.html)')||'';post({title:t,files:f})};
+document.addEventListener('change',e=>{if(e.target.matches('select')&&e.target.dataset.id)post({id:e.target.dataset.id,agent:e.target.value})});
+$('#add').onclick=()=>{['#fTitle','#fGoal','#fAcc','#fFiles'].forEach(s=>$(s).value='');
+ $('#fProject').innerHTML='<option value="">(不綁定:在看板 repo 內執行)</option>'+projects.map(p=>`<option value="${esc(p.id)}"${p.valid?'':' disabled'}>${esc(p.name||p.id)}${p.valid?'':'(路徑失效)'}</option>`).join('');
+ $('#taskModal').hidden=false;$('#fTitle').focus()};
+$('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
+$('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){alert('請填標題');return}
+ await post({title,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true};
+function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(p=>`<div class=row><span><b>${esc(p.name||p.id)}</b> <span class=mut>${esc(p.id)} · ${esc(p.path)}</span> ${p.valid?'':'<span class=warn>⚠ 路徑失效</span>'}</span><button class="iconbtn danger" data-pdel="${esc(p.id)}">🗑 刪除</button></div>`).join(''):'<div class=mut>尚無專案</div>'}
+$('#projBtn').onclick=()=>{paintProjects();$('#projModal').hidden=false};
+$('#projClose').onclick=()=>{$('#projModal').hidden=true};
+$('#projSave').onclick=async()=>{const r=await api('projects',{method:'POST',body:JSON.stringify({id:$('#pId').value.trim(),name:$('#pName').value.trim(),path:$('#pPath').value.trim()})});
+ if(r.error){alert(r.error);return}['#pId','#pName','#pPath'].forEach(s=>$(s).value='');await load();paintProjects()};
 $('#logClose').onclick=closeLog;
 $('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};
 updateNotifyBtn();

@@ -203,6 +203,20 @@ export function stopRun(id) {
   });
 }
 
+// --- Project(board/projects/<id>.json)---
+const projectsDir = path.join(root, 'board/projects');
+export function getProject(pid) {
+  if (!/^[\w-]+$/.test(pid || '')) return null;
+  try { return JSON.parse(fs.readFileSync(path.join(projectsDir, pid + '.json'), 'utf8')); } catch { return null; }
+}
+export function projectValid(p) {
+  try { return !!p && typeof p.path === 'string' && path.isAbsolute(p.path) && fs.statSync(p.path).isDirectory(); } catch { return false; }
+}
+const fmGet = (raw, key) => {
+  const fm = raw.replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
+  return fm.match(new RegExp('^' + key + ':[ \t]*(.*)$', 'm'))?.[1].trim() || '';
+};
+
 export function dispatch(id) {
   const file = path.join(root, 'board/tasks', id + '.md');
   if (!fs.existsSync(file)) throw new Error('找不到任務 ' + id);
@@ -212,9 +226,28 @@ export function dispatch(id) {
   const agent = cfg.agents.find(a => a.id === agentId);
   if (!agent) throw new Error('任務沒有指派有效的 agent(目前: ' + (agentId || '空') + ')');
 
+  // 有綁定 project 就在 project.path 執行;project 不存在或 path 失效一律拒絕,不退回看板 root。
+  const title = fmGet(raw, 'title'), goal = fmGet(raw, 'goal'), acceptance = fmGet(raw, 'acceptance');
+  const projectId = fmGet(raw, 'project');
+  let cwd = root;
+  if (projectId) {
+    const proj = getProject(projectId);
+    if (!proj) throw new Error(`任務綁定的專案「${projectId}」不存在(board/projects/${projectId}.json 找不到),拒絕派工`);
+    if (!projectValid(proj)) throw new Error(`專案「${projectId}」的路徑無效或不存在: ${proj.path},拒絕派工`);
+    cwd = proj.path;
+  }
+
   fs.writeFileSync(file, raw.replace(/^status:.*$/m, 'status: doing').replace(/^updated:.*$/m, 'updated: ' + new Date().toISOString().slice(0, 10)));
-  const prompt = `你是 agent「${agent.id}」。先閱讀 AGENTS.md,然後完成 board/tasks/${id}.md 這張任務。` +
-    `完成後把 status 改成 review,並在該檔 ## Log 追加結果摘要。不要修改其他 agent 的任務。`;
+  let prompt;
+  if (projectId) {
+    prompt = `你是 agent「${agent.id}」。工作目錄是專案「${projectId}」;若專案內有 AGENTS.md 或 CLAUDE.md 請先閱讀。任務內容如下(標題: ${title}` +
+      (goal ? `;目標: ${goal}` : '') + (acceptance ? `;驗收: ${acceptance}` : '') +
+      `)。任務檔在看板 repo,絕對路徑: ${file}。完成後請更新該絕對路徑檔案:把 status 改成 review,並在 ## Log 追加結果摘要。不要修改其他 agent 的任務。`;
+  } else {
+    prompt = `你是 agent「${agent.id}」。先閱讀 AGENTS.md,然後完成 board/tasks/${id}.md 這張任務。` +
+      (goal ? `目標: ${goal}。` : '') + (acceptance ? `驗收: ${acceptance}。` : '') +
+      `完成後把 status 改成 review,並在該檔 ## Log 追加結果摘要。不要修改其他 agent 的任務。`;
+  }
 
   fs.mkdirSync(runsDir, { recursive: true });
   const log = path.join(runsDir, `${id}-${Date.now()}.log`);
@@ -226,7 +259,7 @@ export function dispatch(id) {
 
   let child;
   try {
-    child = spawnCli(agent.cmd, [...(agent.args || []), prompt], { cwd: root, env, stdio: ['ignore', out, out], detached: true });
+    child = spawnCli(agent.cmd, [...(agent.args || []), prompt], { cwd, env, stdio: ['ignore', out, out], detached: true });
   } catch (e) {
     fs.appendFileSync(log, '\n[dispatch] 無法啟動 ' + agent.cmd + ': ' + e.message + '\n');
     revertToTodo(file, `dispatch 失敗(啟動錯誤): ${e.message},見 ${relLog}`);

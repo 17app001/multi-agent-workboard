@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
-import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns } from './dispatch.mjs';
+import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
+const projectsDir = path.join(root, 'board/projects');
 const cfg = () => JSON.parse(fs.readFileSync(path.join(root, 'agents.json'), 'utf8'));
 
 function parse(file) {
@@ -23,12 +24,20 @@ function save(t) {
   // files 是可選欄位:只有真的有值時才寫進 frontmatter,避免幫從沒填過 files
   // 的舊任務憑空多出一行空的 `files: `。
   const fields = ['title', 'status', 'agent', 'priority'];
-  if (meta.files) fields.push('files');
+  for (const k of ['files', 'project', 'pipeline', 'goal', 'acceptance']) if (meta[k]) fields.push(k);
   fields.push('updated');
   const fm = fields.map(k => `${k}: ${meta[k] ?? ''}`).join('\n');
   fs.writeFileSync(path.join(tasksDir, id + '.md'), `---\n${fm}\n---\n${body}`);
 }
 const list = () => fs.readdirSync(tasksDir).filter(f => f.endsWith('.md')).map(parse);
+const listProjects = () => {
+  if (!fs.existsSync(projectsDir)) return [];
+  const out = [];
+  for (const f of fs.readdirSync(projectsDir).filter(f => f.endsWith('.json'))) {
+    try { const p = JSON.parse(fs.readFileSync(path.join(projectsDir, f), 'utf8')); out.push({ ...p, id: f.replace(/\.json$/, ''), valid: projectValid(p) }); } catch { /* 壞檔略過 */ }
+  }
+  return out;
+};
 const send = (res, code, data, type = 'application/json') => { res.writeHead(code, { 'content-type': type }); res.end(type === 'application/json' ? JSON.stringify(data) : data); };
 const readBody = req => new Promise(r => { let s = ''; req.on('data', c => (s += c)); req.on('end', () => r(JSON.parse(s || '{}'))); });
 
@@ -57,6 +66,23 @@ http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/api/config') return send(res, 200, cfg());
+    if (url.pathname === '/api/projects' && req.method === 'GET') return send(res, 200, listProjects());
+    if (url.pathname === '/api/projects' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!/^[\w-]+$/.test(b.id || '')) return send(res, 400, { error: 'bad id' });
+      if (typeof b.path !== 'string' || !projectValid({ path: b.path })) return send(res, 400, { error: 'path 必須是存在的絕對路徑資料夾' });
+      const p = { id: b.id, name: String(b.name || b.id), path: b.path, defaultBranch: String(b.defaultBranch || 'main'), defaultPipeline: String(b.defaultPipeline || 'standard'), worktrees: !!b.worktrees };
+      fs.mkdirSync(projectsDir, { recursive: true });
+      fs.writeFileSync(path.join(projectsDir, p.id + '.json'), JSON.stringify(p, null, 2));
+      return send(res, 200, { ...p, valid: true });
+    }
+    const mProj = url.pathname.match(/^\/api\/projects\/([\w-]+)$/);
+    if (mProj && req.method === 'DELETE') {
+      const f = path.join(projectsDir, mProj[1] + '.json');
+      if (!fs.existsSync(f)) return send(res, 404, { error: '找不到專案' });
+      fs.unlinkSync(f);
+      return send(res, 200, { ok: true });
+    }
     if (url.pathname === '/api/tasks' && req.method === 'GET') return send(res, 200, list());
     if (url.pathname === '/api/dispatch' && req.method === 'POST') {
       const { id, force } = await readBody(req);
@@ -84,7 +110,7 @@ http.createServer(async (req, res) => {
       const file = path.join(tasksDir, id + '.md');
       const cur = fs.existsSync(file) ? parse(id + '.md') : { id, title: 'Untitled', status: 'backlog', agent: '', priority: 'p1', body: '\n\n## Log\n' };
       const next = { ...cur };
-      for (const k of ['title', 'status', 'agent', 'priority', 'files']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
+      for (const k of ['title', 'status', 'agent', 'priority', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
       save(next);
       return send(res, 200, parse(id + '.md'));
     }
