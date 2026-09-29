@@ -48,7 +48,7 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .modalhead .mut{font-size:12px}
 #logContent{overflow:auto;flex:1;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;margin:0;border:1px solid var(--line)}
 </style>
-<h1>Multi-Agent Workboard <button id=add>+ 新任務</button></h1>
+<h1>Multi-Agent Workboard <button id=add>+ 新任務</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
 <div class=usage id=usage></div>
 <h2>看板</h2><div class=cols id=cols></div>
 <div class=modal id=logModal hidden>
@@ -61,8 +61,27 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 const $=s=>document.querySelector(s),api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
 const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':n;
 const STATUS_LABEL={running:'執行中',exited:'已完成',failed:'失敗',error:'啟動失敗',stopped:'已停止',unknown:'狀態未知',none:'尚未派工過'};
-let cfg,tasks=[],runStatus={},openLogId=null;
-async function load(){cfg??=await api('config');tasks=await api('tasks');render();
+let cfg,tasks=[],runStatus={},openLogId=null,userStopping={};
+function beep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
+ o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(ctx.currentTime+.15);
+ setTimeout(()=>{try{ctx.close()}catch(e){}},300)}catch(e){}}
+function notify(title,body){if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+ try{new Notification(title,{body})}catch(e){}beep()}
+function updateNotifyBtn(){const b=$('#notifyBtn');if(!b)return;
+ if(typeof Notification==='undefined'){b.textContent='此瀏覽器不支援通知';b.disabled=true;return}
+ if(Notification.permission==='granted'){b.textContent='🔔 通知已開啟';b.disabled=true}
+ else if(Notification.permission==='denied'){b.textContent='🔔 通知已被封鎖';b.disabled=true}
+ else{b.textContent='🔔 開啟完成通知';b.disabled=false}}
+function checkTaskTransitions(prevStatus){tasks.forEach(t=>{const was=prevStatus[t.id];
+ if(was!==undefined&&was!=='review'&&t.status==='review')notify('任務已完成,待確認','『'+t.title+'』已完成,待確認')})}
+function checkRunTransitions(prevRun){Object.keys(prevRun).forEach(id=>{const was=prevRun[id],now=runStatus[id]?.status;
+ if(was!=='running')return;
+ if(userStopping[id]){delete userStopping[id];return}
+ const t=tasks.find(x=>x.id===id),title=t?t.title:id;
+ if(now==='stopped')notify('任務已停止','『'+title+'』已被手動停止');
+ else if(now==='failed'||now==='error')notify('任務失敗','『'+title+'』執行失敗,請查看 log')})}
+async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
+ cfg??=await api('config');tasks=await api('tasks');render();checkTaskTransitions(prevStatus);
  api('usage').then(u=>{$('#usage').innerHTML=u.map(a=>{const mx=Math.max(1,...a.days.map(d=>d.total));
   return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
   <div class=big>${fmt(a.today)} <span class=mut>今日</span></div>
@@ -95,16 +114,19 @@ function paintLog(){if(!openLogId)return;const r=runStatus[openLogId];if(!r)retu
 async function openLog(id){openLogId=id;$('#logModal').hidden=false;await fetchLog(id);paintLog()}
 function closeLog(){openLogId=null;$('#logModal').hidden=true}
 async function refreshActive(){const ids=new Set(tasks.filter(t=>t.status==='doing').map(t=>t.id));if(openLogId)ids.add(openLogId);
- if(ids.size===0)return;await Promise.all([...ids].map(fetchLog));render();paintLog()}
+ if(ids.size===0)return;const prevRun={};ids.forEach(id=>{prevRun[id]=runStatus[id]?.status});
+ await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);render();paintLog()}
 document.addEventListener('click',async e=>{
  const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del;
  if(run){const r=await api('dispatch',{method:'POST',body:JSON.stringify({id:run})});if(r.error){alert(r.error)}else{await load();openLog(run)}return}
- if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
+ if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
  if(logId){openLog(logId);return}
  if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
 });
 document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
 $('#add').onclick=()=>{const t=prompt('任務標題');if(t)post({title:t})};
 $('#logClose').onclick=closeLog;
+$('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};
+updateNotifyBtn();
 load();setInterval(load,15000);setInterval(refreshActive,3000);
 </script></html>
