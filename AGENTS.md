@@ -50,3 +50,20 @@
 - 大範圍重構、複雜除錯 → claude
 - 平行的獨立功能、批次改動 → codex-a / codex-b
 - 長文件閱讀、需要大 context 的分析 → gemini
+
+# v2.1 施工接手指南(進行中的大改版,任何 agent 接續前必讀)
+
+**權威規格:`docs/v2.1-spec.md`**(擁有者 Claude)。`docs/Multi-Agent_Workboard_v2_實作與功能建議.md` 只是輸入建議,衝突時以 spec 為準(spec §2 有逐條取捨,例如**不換 Python/FastAPI,維持 Node 零依賴**)。
+
+## 接手步驟
+1. 讀 `next-session-handoff.md`(目前進度與待決事項)→ `docs/v2.1-spec.md` → 你要做的 `board/tasks/v21-wp*.md`。
+2. **狀態以任務卡為準,不另開進度表**。領取:確認 `agent:` 是你、依賴的 WP 已 `review`/`done`,再把 `status` 改 `doing`。完成:`npm test` 全過 → 改 `review` → 在 `## Log` 追加「做了什麼/改了哪些檔/測試輸出摘要/未完成與風險」。**不要自己改 `done`**。
+3. 一個 WP 一個 commit(或數個小 commit),訊息說明 WP 編號。不要順手改範圍外的東西;範圍外的發現寫進任務 Log,或新增一張任務卡。
+4. 動到 spec 規定的事(資料格式、架構決策、adapter 介面)之前先看 spec;要偏離就在任務 Log 寫原因並通知使用者,不要悄悄改。
+
+## 硬性規則
+- 不引入 npm 套件;不使用 `--dangerously-*` 旗標;不修改各 CLI 的 log/設定。
+- **測試不得呼叫真實 claude/codex/gemini**(用假 CLI 腳本),也**不得碰真實 `board/tasks/`、`board/projects/`**——沿用 `tests/server.test.mjs` 的暫存目錄隔離。曾發生 subagent 測試清理時清空 `board/tasks/` 的事故:清理只能刪「明確檔名」,並在前後比對目錄清單。
+- 用真實 CLI 的煙霧測試由 WP owner 手動跑,輸出摘要寫進任務 Log。
+- Windows 相容(中文系統):砍行程用 `taskkill /pid <pid> /T /F`,不要比對英文輸出字串。
+- 改 `tools/*.mjs` 後要重啟 server;`node --check` 與 `npm test` 是最低門檻。
