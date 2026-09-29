@@ -22,7 +22,8 @@
       "home": "~/.codex",
       "args": [
         "exec",
-        "--full-auto"
+        "-s",
+        "workspace-write"
       ],
       "price": {
         "input": 1.25,
@@ -39,7 +40,8 @@
       "home": "~/.codex-b",
       "args": [
         "exec",
-        "--full-auto"
+        "-s",
+        "workspace-write"
       ],
       "price": {
         "input": 1.25,
