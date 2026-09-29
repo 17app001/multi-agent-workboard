@@ -11,7 +11,9 @@ const runsDir = path.join(root, 'board/runs');
 const stateFile = path.join(runsDir, 'state.json');
 const expand = p => p.replace(/^~/, os.homedir());
 
-// id -> { pid, log(相對路徑), agent, startedAt, status, exitCode, error, live }
+// id -> { pid, log(相對路徑), agent, startedAt, endedAt, status, exitCode, error, live }
+// endedAt: 行程結束的時間戳(exit/error/stop 時補上);還在跑(status:'running')時是 null,
+// 給用量估算(usageInRange)拿來當時間範圍的結尾——行程還沒結束就用 Date.now() 頂替。
 // status: 'running' | 'exited' | 'failed' | 'error' | 'stopped'
 // live: 只存在記憶體,不落地。true 表示這個 run 是本次 server 行程親自 spawn 的,
 // 掛了 exit/error listener,狀態變化會即時反映;false 表示是從 board/runs/state.json
@@ -25,7 +27,7 @@ const runs = new Map();
 function saveState() {
   const obj = {};
   for (const [id, r] of runs) {
-    obj[id] = { pid: r.pid, log: r.log, agent: r.agent, startedAt: r.startedAt, status: r.status, exitCode: r.exitCode, error: r.error };
+    obj[id] = { pid: r.pid, log: r.log, agent: r.agent, startedAt: r.startedAt, endedAt: r.endedAt ?? null, status: r.status, exitCode: r.exitCode, error: r.error };
   }
   try {
     fs.mkdirSync(runsDir, { recursive: true });
@@ -192,6 +194,7 @@ export function stopRun(id) {
     exec(`taskkill /pid ${run.pid} /T /F`, (err, stdout, stderr) => {
       if (err) { resolve({ ok: false, error: (stderr || err.message || '').trim() || 'taskkill 失敗' }); return; }
       run.status = 'stopped';
+      run.endedAt = Date.now();
       saveState();
       const file = path.join(root, 'board/tasks', id + '.md');
       revertToTodo(file, `使用者手動停止 (${new Date().toISOString()})`);
@@ -227,23 +230,23 @@ export function dispatch(id) {
   } catch (e) {
     fs.appendFileSync(log, '\n[dispatch] 無法啟動 ' + agent.cmd + ': ' + e.message + '\n');
     revertToTodo(file, `dispatch 失敗(啟動錯誤): ${e.message},見 ${relLog}`);
-    runs.set(id, { pid: null, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'error', exitCode: null, error: e.message, live: true });
+    runs.set(id, { pid: null, log: relLog, agent: agent.id, startedAt: Date.now(), endedAt: Date.now(), status: 'error', exitCode: null, error: e.message, live: true });
     saveState();
     throw new Error('啟動 ' + agent.cmd + ' 失敗: ' + e.message);
   }
 
-  runs.set(id, { pid: child.pid, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'running', exitCode: null, error: null, live: true });
+  runs.set(id, { pid: child.pid, log: relLog, agent: agent.id, startedAt: Date.now(), endedAt: null, status: 'running', exitCode: null, error: null, live: true });
   saveState();
 
   child.on('error', e => {
     fs.appendFileSync(log, '\n[dispatch] 無法啟動 ' + agent.cmd + ': ' + e.message + '\n');
-    const run = runs.get(id); if (run) { run.status = 'error'; run.error = e.message; saveState(); }
+    const run = runs.get(id); if (run) { run.status = 'error'; run.error = e.message; run.endedAt = Date.now(); saveState(); }
     revertToTodo(file, `dispatch 失敗: ${e.message},見 ${relLog}`);
   });
   child.on('exit', code => {
     fs.appendFileSync(log, `\n[dispatch] exit ${code}\n`);
     const run = runs.get(id);
-    if (run && run.status === 'running') { run.status = code === 0 ? 'exited' : 'failed'; run.exitCode = code; saveState(); }
+    if (run && run.status === 'running') { run.status = code === 0 ? 'exited' : 'failed'; run.exitCode = code; run.endedAt = Date.now(); saveState(); }
     if (code !== 0) revertToTodo(file, `dispatch 失敗 (exit ${code}),見 ${relLog}`);
   });
   child.unref();
