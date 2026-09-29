@@ -108,7 +108,8 @@ document.addEventListener('drop',e=>{const c=e.target.closest('.col');if(c){e.pr
 async function fetchLog(id){try{runStatus[id]=await api('tasks/'+id+'/log')}catch(e){runStatus[id]={status:'unknown',content:'讀取失敗: '+e.message,runs:[]}}}
 function paintLog(){if(!openLogId)return;const r=runStatus[openLogId];if(!r)return;
  $('#logTitle').textContent='Log: '+openLogId;
- $('#logMeta').textContent=`${r.agent?('agent: '+r.agent+' · '):''}狀態: ${STATUS_LABEL[r.status]||r.status}${r.runs&&r.runs.length>1?(' · 共 '+r.runs.length+' 次派工紀錄'):''}`;
+ const usageTxt=r.usage?(' · 本次用量: 約 '+(r.usage.total>=1000?(r.usage.total/1000).toFixed(1)+'k':r.usage.total)+' tokens'+(r.usage.costEstimate>0?' · 約 $'+r.usage.costEstimate.toFixed(2)+'(估算)':'')):'';
+ $('#logMeta').textContent=`${r.agent?('agent: '+r.agent+' · '):''}狀態: ${STATUS_LABEL[r.status]||r.status}${r.runs&&r.runs.length>1?(' · 共 '+r.runs.length+' 次派工紀錄'):''}${usageTxt}`;
  const pre=$('#logContent');
  pre.textContent=(r.truncated?'...(log 太長,只顯示最後一段)...\n':'')+(r.content||'(尚無輸出)');
  pre.scrollTop=pre.scrollHeight}

@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectUsage } from './usage.mjs';
+import { collectUsage, usageInRange } from './usage.mjs';
 import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns } from './dispatch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -94,11 +94,19 @@ http.createServer(async (req, res) => {
     if (mLog && req.method === 'GET') {
       const id = mLog[1];
       const all = listRuns(id);
-      if (all.length === 0) return send(res, 200, { status: 'none', agent: null, pid: null, exitCode: null, log: null, content: '', truncated: false, runs: [] });
+      if (all.length === 0) return send(res, 200, { status: 'none', agent: null, pid: null, exitCode: null, log: null, content: '', truncated: false, runs: [], usage: null });
       const latest = all[0];
       const { content, truncated } = readLog(latest.file);
       const live = getRun(id);
       const usingLive = live && live.log === latest.file;
+      // 這次派工大概花了多少用量:用 run 的 startedAt~(endedAt 或現在)當時間窗,
+      // 去對應 agent 的本機 log 抓這段時間內的用量加總(見 usage.mjs 的 usageInRange)。
+      // 這是時間窗估算,不是精確歸因——同時間若使用者手動用同一個 agent 也會被算進來。
+      let usage = null;
+      if (usingLive) {
+        const agentCfg = cfg().agents.find(a => a.id === live.agent);
+        if (agentCfg) usage = usageInRange(agentCfg, live.startedAt, live.endedAt || Date.now());
+      }
       return send(res, 200, {
         status: usingLive ? live.status : 'unknown',
         agent: usingLive ? live.agent : null,
@@ -107,6 +115,7 @@ http.createServer(async (req, res) => {
         log: latest.file,
         content, truncated,
         runs: all.map(r => r.file),
+        usage,
       });
     }
     // 停止某任務目前的派工行程(整棵行程樹一起砍),成功後任務退回 todo
