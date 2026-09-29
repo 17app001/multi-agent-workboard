@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectUsage } from './usage.mjs';
+import { dispatch } from './dispatch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
@@ -31,6 +32,11 @@ http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/api/config') return send(res, 200, cfg());
     if (url.pathname === '/api/tasks' && req.method === 'GET') return send(res, 200, list());
+    if (url.pathname === '/api/dispatch' && req.method === 'POST') {
+      const { id } = await readBody(req);
+      if (!/^[\w-]+$/.test(id || '')) return send(res, 400, { error: 'bad id' });
+      try { return send(res, 200, dispatch(id)); } catch (e) { return send(res, 400, { error: e.message }); }
+    }
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
       const b = await readBody(req);

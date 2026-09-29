@@ -74,12 +74,18 @@ export function collectUsage(agents) {
     const byDay = fs.existsSync(home) ? parsers[a.type](home) : null;
     const days = Object.entries(byDay || {}).sort().map(([date, v]) => ({ date, ...v, total: v.input + v.cached + v.output }));
     const sum = k => days.reduce((s, d) => s + d[k], 0);
+    const pr = a.price || {};
+    const cost = d => ((d.input * (pr.input || 0)) + (d.cached * (pr.cached || 0)) + (d.output * (pr.output || 0))) / 1e6;
+    for (const d of days) d.cost = cost(d);
     const today = new Date().toISOString().slice(0, 10);
     const weekAgo = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
     return {
       id: a.id, label: a.label, type: a.type, found: !!byDay,
       today: days.filter(d => d.date === today).reduce((s, d) => s + d.total, 0),
       week: days.filter(d => d.date >= weekAgo).reduce((s, d) => s + d.total, 0),
+      costToday: days.filter(d => d.date === today).reduce((s, d) => s + d.cost, 0),
+      costWeek: days.filter(d => d.date >= weekAgo).reduce((s, d) => s + d.cost, 0),
+      costTotal: days.reduce((s, d) => s + d.cost, 0),
       total: sum('total'), input: sum('input'), cached: sum('cached'), output: sum('output'),
       days: days.slice(-14),
     };

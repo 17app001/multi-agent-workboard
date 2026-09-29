@@ -1,9 +1,74 @@
 {
   "agents": [
-    { "id": "claude",  "type": "claude", "label": "Claude Code", "home": "~/.claude" },
-    { "id": "codex-a", "type": "codex",  "label": "Codex A",     "home": "~/.codex" },
-    { "id": "codex-b", "type": "codex",  "label": "Codex B",     "home": "~/.codex-b" },
-    { "id": "gemini",  "type": "gemini", "label": "Gemini CLI",  "home": "~/.gemini" }
+    {
+      "id": "claude",
+      "type": "claude",
+      "label": "Claude Code",
+      "home": "~/.claude",
+      "args": [
+        "-p"
+      ],
+      "price": {
+        "input": 3,
+        "cached": 0.3,
+        "output": 15
+      },
+      "cmd": "claude"
+    },
+    {
+      "id": "codex-a",
+      "type": "codex",
+      "label": "Codex A",
+      "home": "~/.codex",
+      "args": [
+        "exec",
+        "--full-auto"
+      ],
+      "price": {
+        "input": 1.25,
+        "cached": 0.125,
+        "output": 10
+      },
+      "cmd": "codex"
+    },
+    {
+      "id": "codex-b",
+      "type": "codex",
+      "label": "Codex B",
+      "home": "~/.codex-b",
+      "args": [
+        "exec",
+        "--full-auto"
+      ],
+      "price": {
+        "input": 1.25,
+        "cached": 0.125,
+        "output": 10
+      },
+      "cmd": "codex"
+    },
+    {
+      "id": "gemini",
+      "type": "gemini",
+      "label": "Gemini CLI",
+      "home": "~/.gemini",
+      "args": [
+        "-p"
+      ],
+      "price": {
+        "input": 1.25,
+        "cached": 0.31,
+        "output": 10
+      },
+      "cmd": "gemini"
+    }
   ],
-  "columns": ["backlog", "todo", "doing", "review", "done"]
+  "columns": [
+    "backlog",
+    "todo",
+    "doing",
+    "review",
+    "done"
+  ],
+  "_note": "price = USD per 1M tokens(API 等值估算,請依你實際使用的模型改);args = 派工時傳給 CLI 的參數,prompt 會接在最後"
 }

@@ -29,17 +29,20 @@ async function load(){cfg??=await api('config');tasks=await api('tasks');render(
   return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
   <div class=big>${fmt(a.today)} <span class=mut>今日</span></div>
   <div class=mut>7日 ${fmt(a.week)} · 累計 ${fmt(a.total)}</div>
+  <div class=mut>≈ $${a.costToday.toFixed(2)} 今日 · $${a.costWeek.toFixed(2)} 7日 · $${a.costTotal.toFixed(2)} 累計</div>
   <div class=mut>in ${fmt(a.input)} · cache ${fmt(a.cached)} · out ${fmt(a.output)}</div>
   <div class=bar>${a.days.map(d=>`<i title="${d.date}: ${fmt(d.total)}" style="height:${d.total/mx*100}%"></i>`).join('')}</div>`
   :`<div class=mut>找不到 log 目錄,請檢查 agents.json 的 home</div>`}</div>`}).join('')})}
 function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
  tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
  <select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
- <span class=mut>${t.priority}</span></div>`).join('')}</div>`).join('')}
+ <span class=mut>${t.priority}</span> ${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}</div>`).join('')}</div>`).join('')}
 const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
 document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
 document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
 document.addEventListener('drop',e=>{const c=e.target.closest('.col');if(c){e.preventDefault();post({id:e.dataTransfer.getData('id'),status:c.dataset.c})}});
+document.addEventListener('click',async e=>{const id=e.target.dataset?.run;if(!id)return;
+ const r=await api('dispatch',{method:'POST',body:JSON.stringify({id})});alert(r.error||('已啟動,log: '+r.log));load()});
 document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
 $('#add').onclick=()=>{const t=prompt('任務標題');if(t)post({title:t})};
 load();setInterval(load,15000);
