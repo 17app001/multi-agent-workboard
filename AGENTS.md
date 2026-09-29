@@ -23,6 +23,7 @@
 ## 開發這個 repo
 - 啟動:`node tools/server.mjs [port]`,開 `http://localhost:4173`。改 `tools/*.mjs` 後要重啟;改 `web/` 重新整理即可。
 - 語法檢查:`node --check tools/<file>.mjs`。
+- 測試:`npm test`(`node:test`,零依賴)。`tests/usage.test.mjs` 用假 log fixture 測用量解析;`tests/server.test.mjs` 把 `tools/` 複製到暫存目錄起獨立 server,**不會碰真實的 `board/tasks/`**——新增測試請沿用這個隔離做法。
 - 用量解析注意:各 CLI 的 log 格式會隨版本變動,解析要寬鬆(缺欄位不要丟例外)。修改前先看本機實際的 log 檔確認格式。
 - 費用是「API 等值估算」,使用者是訂閱制,UI 上僅供參考,不代表實際扣費。
 - 環境可能是 Windows,處理路徑與啟動 CLI(.cmd)時要相容;砍行程要用 `taskkill /pid <pid> /T /F` 砍整棵行程樹,單砍 spawn 回來的 pid 可能砍不掉真正在跑的 CLI。判斷 pid 是否還活著不要比對 `tasklist` 輸出裡的英文字串(這台機器是中文 Windows,訊息是中文),要比對 pid 數字本身。
