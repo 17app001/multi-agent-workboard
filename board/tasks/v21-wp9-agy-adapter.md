@@ -1,10 +1,10 @@
 ---
 title: WP9 新增 agy(Antigravity) adapter
-status: doing
+status: done
 agent: codex-a
 priority: p1
 files: tools/adapters/agy.mjs,tools/adapters/index.mjs,tests/adapters.test.mjs,tests/fixtures
-updated: 2026-09-29
+updated: 2026-09-30
 ---
 
 # WP9 新增 agy (Antigravity CLI) adapter
@@ -33,3 +33,6 @@ Gemini CLI 帳號已不可用(UNSUPPORTED_CLIENT),改用 Google 的 Antigravity 
 ## Log
 
 - dispatch 失敗 (exit 2),見 board\runs\v21-wp9-agy-adapter-1790724363773.log
+- 2026-09-30 codex-a：新增 `tools/adapters/agy.mjs`，支援 plan/review/execute 的安全旗標、綁定式 `-p=<prompt>` argv，以及實測 stream-json 的 init/agent_response/result 事件；在 `tools/adapters/index.mjs` 註冊 agy，並擴充 `tests/adapters.test.mjs` 的 mode、fixture、壞行與未知事件測試。沿用既有 `tests/fixtures/agy-plan-sample.jsonl`，未修改真實 CLI log。
+- 驗證：`node --check tools/adapters/agy.mjs`、index 與測試檔皆通過；adapter suite 17/17 通過，連同無子行程測試共 24/24 通過。`npm test` 在此受限執行環境中於 Node test runner/測試 server 呼叫 `child_process.spawn` 時統一遭 `EPERM`，未進入測試斷言，需由一般本機環境複跑完整 suite。
+- 未涵蓋/風險：依任務指示未呼叫真實 agy，execute 模式未煙霧測試；fixture 未出現的工具事件一律回 null，待取得真實 schema 後再擴充。

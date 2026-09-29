@@ -1,0 +1,12 @@
+{
+  "id": "standard",
+  "description": "標準流程:Claude 出計畫(人工核准關卡)→ Codex 實作 → 跑測試 → Claude 審查 → 不過則回修(上限 maxRevisions)。gemini 目前帳號不可用,故審查改由 claude 擔任(與實作者不同 agent)。",
+  "maxRevisions": 3,
+  "steps": [
+    { "id": "plan", "agent": "claude", "mode": "plan", "output": "plan.md", "gate": "human" },
+    { "id": "code", "agent": "codex-a", "mode": "execute", "input": ["plan.md"] },
+    { "id": "test", "type": "command", "command": "npm test", "output": "test.txt" },
+    { "id": "review", "agent": "claude", "mode": "review", "input": ["plan.md", "test.txt"], "output": "review.md" },
+    { "id": "revise", "agent": "codex-a", "mode": "execute", "when": "review.failed", "input": ["plan.md", "review.md", "test.txt"], "loopTo": "test" }
+  ]
+}

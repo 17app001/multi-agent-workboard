@@ -1,6 +1,6 @@
 ---
 title: WP3 Run 引擎、Pipeline 與計畫核准關卡
-status: backlog
+status: review
 agent: claude
 priority: p0
 files: tools/engine.mjs,tools/dispatch.mjs,tools/server.mjs,pipelines
@@ -22,3 +22,7 @@ updated: 2026-09-30
 驗收:用假 CLI 腳本測完整流程(plan→gate→execute→test→review FAIL→revise→PASS)、gate 未核准時 execute 不會啟動、超限進 needs-you、stop 砍整棵行程樹;npm test 全過。
 
 ## Log
+
+### 2026-09-30 WP3 完成(sonnet subagent 實作,指揮官複核)
+- 新增 `tools/engine.mjs`、`pipelines/{standard,single}.json`、`tests/engine.test.mjs`(19)、`tests/fixtures/fake-cli.mjs`;改 `tools/server.mjs`(/api/runs/*、/api/pipelines、status 對映)、`tools/dispatch.mjs`(僅 export 兩個函式)。`npm test` 56/56。
+- 已知未涵蓋:.cmd 包裝路徑、重啟後接手 command step、loopTo 回更早 step、併發多 run、posix 分支、真實 CLI execute 模式;plan.md 取「最後一則 message」對真實 CLI 是否完整未驗證(下一步用真實 claude 煙霧測試)。

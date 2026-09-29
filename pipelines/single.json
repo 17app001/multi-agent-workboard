@@ -1,0 +1,10 @@
+{
+  "id": "single",
+  "description": "單一 agent(取任務的 agent 欄位):先 plan + 人工核准關卡,再 execute。dispatch 帶 noGate:true 可關閉核准關卡。",
+  "maxRevisions": 0,
+  "allowNoGate": true,
+  "steps": [
+    { "id": "plan", "agent": "@task", "mode": "plan", "output": "plan.md", "gate": "human" },
+    { "id": "execute", "agent": "@task", "mode": "execute", "input": ["plan.md"] }
+  ]
+}

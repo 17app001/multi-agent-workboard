@@ -11,7 +11,7 @@ const P = 'do it';
 const CWD = path.join(os.tmpdir(), 'proj');
 
 test('getAdapter / registry', () => {
-  for (const t of ['claude', 'codex', 'gemini']) assert.equal(getAdapter(t).id, t);
+  for (const t of ['claude', 'codex', 'gemini', 'agy']) assert.equal(getAdapter(t).id, t);
   assert.equal(getAdapter('nope'), null);
   assert.equal(getAdapter('toString'), null);
 });
@@ -58,7 +58,20 @@ test('gemini buildCommand', () => {
   assert.deepEqual(e.args, ['-p', P, '--approval-mode', 'auto_edit', '-o', 'stream-json', '--skip-trust']);
 });
 
-const samples = { claude: 'claude-plan-sample.jsonl', codex: 'codex-plan-sample.jsonl', gemini: 'gemini-plan-sample.jsonl' };
+test('agy buildCommand', () => {
+  const a = registry.agy;
+  for (const mode of ['plan', 'review']) {
+    const r = a.buildCommand({ mode, prompt: P, cwd: CWD, agentCfg: { cmd: 'agy-custom', args: ['--dangerously-skip-permissions'] } });
+    assert.deepEqual(r.args, [`-p=${P}`, '--mode', 'plan', '--output-format', 'stream-json']);
+    assert.equal(r.cmd, 'agy-custom'); assert.equal(r.cwd, CWD); assert.deepEqual(r.env, {});
+    assert.ok(!r.args.some(arg => arg.startsWith('--dangerously')));
+  }
+  const e = a.buildCommand({ mode: 'execute', prompt: P, cwd: CWD }); // 未實跑
+  assert.deepEqual(e.args, [`-p=${P}`, '--mode', 'accept-edits', '--output-format', 'stream-json']);
+  assert.equal(e.cmd, 'agy');
+});
+
+const samples = { claude: 'claude-plan-sample.jsonl', codex: 'codex-plan-sample.jsonl', gemini: 'gemini-plan-sample.jsonl', agy: 'agy-plan-sample.jsonl' };
 for (const [type, file] of Object.entries(samples)) {
   test(`${type} parseLine:樣本逐行餵入(${file})`, () => {
     const a = registry[type];
@@ -104,4 +117,18 @@ test('codex/gemini parseLine:命令、檔案、錯誤(合成行)', () => {
   assert.equal(g.parseLine(JSON.stringify({ type: 'tool_use', tool_name: 'write_file', parameters: { file_path: 'y' } })).kind, 'file-edit');
   const ge = g.parseLine(JSON.stringify({ type: 'tool_result', status: 'error', output: 'Tool execution denied by policy' }));
   assert.equal(ge.needsHuman, true);
+});
+
+test('agy parseLine:只解析已實測事件', () => {
+  const a = registry.agy;
+  const start = a.parseLine(JSON.stringify({ event: 'init', conversation_id: 'c1', init: { permission_mode: 'request-review' } }));
+  assert.equal(start.kind, 'start'); assert.equal(start.sessionId, 'c1');
+  const active = a.parseLine(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', state: 'ACTIVE', text_delta: 'part' } }));
+  assert.equal(active.kind, 'message'); assert.equal(active.text, 'part');
+  assert.equal(a.parseLine(JSON.stringify({ event: 'step_update', step_update: { step_type: 'user_input', state: 'DONE' } })), null);
+  assert.equal(a.parseLine(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool_call', state: 'DONE' } })), null);
+  assert.equal(a.parseLine(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', state: 'DONE', text_delta: '\n' } })), null);
+  const ok = a.parseLine(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'done' } }));
+  assert.equal(ok.kind, 'end'); assert.equal(ok.exitCode, 0); assert.equal(ok.text, 'done');
+  assert.equal(a.parseLine(JSON.stringify({ event: 'result', result: { status: 'FAILED' } })).exitCode, 1);
 });

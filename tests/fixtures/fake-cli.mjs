@@ -1,0 +1,63 @@
+// 假 CLI:模擬 claude / codex 的結構化輸出,給 tests/engine.test.mjs 用(不呼叫真實 CLI)。
+// flavor 由旗標判斷:有 --permission-mode → claude(stream-json);否則 codex(--json JSONL)。
+// mode 由 prompt 裡的「(mode: plan|execute|review)」判斷(引擎組的 prompt 一定有)。
+// 行為由 cwd 底下的 fake-control.json 控制(缺省=成功):
+//   { "verdicts": ["FAIL","PASS"],   // review 第 n 次呼叫的結論(超出用最後一個)
+//     "verdictRaw": "沒有 VERDICT",   // 若有,review 回覆改用這段文字(測解析不到 VERDICT)
+//     "hang": "execute",             // 該 mode 寫 hang.pid 後卡住不結束
+//     "denyExecute": true,           // execute 時回報 permission_denials(權限被拒)
+//     "exit": { "plan": 3 } }        // 該 mode 印完後以此 exit code 結束
+// 每次呼叫附加一行到 process.env.FAKE_LOG:{ flavor, flagMode, mode, cwd, prompt, n, args }。
+// execute 會在 cwd 寫 executed.marker(內容=呼叫次數),用來證明「execute 有/沒有被啟動」。
+import fs from 'node:fs';
+import path from 'node:path';
+
+const args = process.argv.slice(2);
+const prompt = args[args.length - 1] || '';
+const flavor = args.includes('--permission-mode') ? 'claude' : 'codex';
+const flagVal = flavor === 'claude' ? args[args.indexOf('--permission-mode') + 1] : args[args.indexOf('-s') + 1];
+const flagMode = flagVal === 'plan' || flagVal === 'read-only' ? 'readonly' : 'write';
+const mode = (/\(mode: (plan|execute|review)\)/.exec(prompt) || [])[1] || 'unknown';
+const cwd = process.cwd();
+
+let control = {};
+try { control = JSON.parse(fs.readFileSync(path.join(cwd, 'fake-control.json'), 'utf8')); } catch { /* 缺省 */ }
+const countsFile = path.join(cwd, '.fake-counts.json');
+let counts = {};
+try { counts = JSON.parse(fs.readFileSync(countsFile, 'utf8')); } catch { /* 第一次 */ }
+const n = (counts[mode] = (counts[mode] || 0) + 1);
+fs.writeFileSync(countsFile, JSON.stringify(counts));
+if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ flavor, flagMode, mode, cwd, prompt, n, args: args.slice(0, -1) }) + '\n');
+
+const out = o => process.stdout.write(JSON.stringify(o) + '\n');
+const init = () => (flavor === 'claude'
+  ? out({ type: 'system', subtype: 'init', model: 'fake', session_id: 's1' })
+  : out({ type: 'thread.started', thread_id: 't1' }));
+const message = t => (flavor === 'claude'
+  ? out({ type: 'assistant', message: { content: [{ type: 'text', text: t }] } })
+  : out({ type: 'item.completed', item: { type: 'agent_message', text: t } }));
+const end = (t, denied) => {
+  if (flavor === 'claude') return out({ type: 'result', subtype: 'success', is_error: false, result: t, permission_denials: denied ? [{ tool_name: 'Bash' }] : [] });
+  if (denied) out({ type: 'item.completed', item: { type: 'command_execution', status: 'declined', command: 'rm -rf x' } });
+  return out({ type: 'turn.completed' });
+};
+
+init();
+if (control.hang === mode) {
+  fs.writeFileSync(path.join(cwd, 'hang.pid'), String(process.pid));
+  setInterval(() => {}, 1000);
+} else {
+  let text;
+  if (mode === 'plan') text = `# Plan\n- step A (plan #${n})\n- 預計動到 src/a.js`;
+  else if (mode === 'review') {
+    const vs = control.verdicts || ['PASS'];
+    text = control.verdictRaw || `VERDICT: ${vs[Math.min(n - 1, vs.length - 1)]}\n審查第 ${n} 次的理由`;
+  } else {
+    fs.writeFileSync(path.join(cwd, 'executed.marker'), String(n));
+    text = `已完成實作 (execute #${n})`;
+  }
+  message(text);
+  end(text, control.denyExecute && mode === 'execute');
+  const code = control.exit && control.exit[mode];
+  if (code) process.exitCode = code;
+}

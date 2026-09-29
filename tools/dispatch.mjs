@@ -45,7 +45,7 @@ loadState();
 
 // 問 OS 這個 pid 是否還存在(不看記憶體狀態,直接查行程表,server 重啟後
 // 靠這個分辨「真的還在跑」跟「其實已經結束但沒人記錄到」)。
-function isPidRunning(pid) {
+export function isPidRunning(pid) {
   if (!pid) return false;
   if (process.platform === 'win32') {
     try {
@@ -123,7 +123,7 @@ function findOnPath(cmd) {
   return null;
 }
 
-function spawnCli(cmd, args, opts) {
+export function spawnCli(cmd, args, opts) {
   if (process.platform !== 'win32') return spawn(cmd, args, opts);
   const resolved = findOnPath(cmd) || cmd;
   if (/\.(cmd|bat)$/i.test(resolved)) {

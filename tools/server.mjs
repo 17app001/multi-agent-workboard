@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
 import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
+import * as engine from './engine.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
@@ -29,7 +30,13 @@ function save(t) {
   const fm = fields.map(k => `${k}: ${meta[k] ?? ''}`).join('\n');
   fs.writeFileSync(path.join(tasksDir, id + '.md'), `---\n${fm}\n---\n${body}`);
 }
-const list = () => fs.readdirSync(tasksDir).filter(f => f.endsWith('.md')).map(parse);
+// task 狀態:v2 值(draft/queued/running/needs-you/completed/failed/cancelled)與舊欄位值(backlog/todo/doing/review/done)並存。
+// 檔案裡存什麼就是什麼(舊任務不必改寫);對外輸出時 status 一律對映成看板欄位(needs-you 顯示在 review 欄),
+// 另附 state = v2 值。failed/cancelled 顯示在 todo 欄(可重新派工,同舊版失敗退回 todo 的行為)。
+const TO_COLUMN = { draft: 'backlog', queued: 'todo', running: 'doing', 'needs-you': 'review', completed: 'done', failed: 'todo', cancelled: 'todo' };
+const TO_STATE = { backlog: 'draft', todo: 'queued', doing: 'running', review: 'needs-you', done: 'completed' };
+const view = t => ({ ...t, status: TO_COLUMN[t.status] || t.status, state: TO_STATE[t.status] || t.status });
+const list = () => fs.readdirSync(tasksDir).filter(f => f.endsWith('.md')).map(parse).map(view);
 const listProjects = () => {
   if (!fs.existsSync(projectsDir)) return [];
   const out = [];
@@ -49,7 +56,7 @@ const parseFiles = str => String(str || '').split(',').map(normPath).filter(Bool
 const filesConflict = (a, b) => a === b || a.startsWith(b + '/') || b.startsWith(a + '/');
 function findFileConflict(id, files) {
   if (!files.length) return null;
-  for (const r of listActiveRuns()) {
+  for (const r of [...listActiveRuns(), ...engine.listActiveRuns()]) {
     if (r.id === id) continue;
     const otherFilePath = path.join(tasksDir, r.id + '.md');
     if (!fs.existsSync(otherFilePath)) continue;
@@ -62,6 +69,7 @@ function findFileConflict(id, files) {
   return null;
 }
 
+engine.init(); // 接手上次 server 留下的 running run(needs-you 的 run 不需要行程,呼叫 API 時才載入)
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -85,7 +93,7 @@ http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/tasks' && req.method === 'GET') return send(res, 200, list());
     if (url.pathname === '/api/dispatch' && req.method === 'POST') {
-      const { id, force } = await readBody(req);
+      const { id, force, noGate } = await readBody(req);
       if (!/^[\w-]+$/.test(id || '')) return send(res, 400, { error: 'bad id' });
       if (!force) {
         const file = path.join(tasksDir, id + '.md');
@@ -100,7 +108,14 @@ http.createServer(async (req, res) => {
           }
         }
       }
-      try { return send(res, 200, dispatch(id)); } catch (e) { return send(res, 400, { error: e.message }); }
+      try {
+        // 任務有 pipeline(或 project 的 defaultPipeline 存在)→ 新引擎;否則走舊的單發派工(相容)
+        if (engine.resolvePipelineId(id)) {
+          const r = engine.startRun(id, { noGate: !!noGate });
+          return send(res, 200, { ...r, engine: true, agent: null, log: null, pid: null });
+        }
+        return send(res, 200, dispatch(id));
+      } catch (e) { return send(res, e.status || 400, { error: e.message }); }
     }
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
@@ -112,7 +127,27 @@ http.createServer(async (req, res) => {
       const next = { ...cur };
       for (const k of ['title', 'status', 'agent', 'priority', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
       save(next);
-      return send(res, 200, parse(id + '.md'));
+      return send(res, 200, view(parse(id + '.md')));
+    }
+    // --- v2.1 run 引擎 API ---
+    if (url.pathname === '/api/pipelines' && req.method === 'GET') return send(res, 200, engine.listPipelines());
+    const mRun = url.pathname.match(/^\/api\/runs\/([\w-]+)(?:\/([a-z]+)(?:\/([^/]+))?)?$/);
+    if (mRun) {
+      const [, taskId, sub, name] = mRun;
+      if (!sub && req.method === 'GET') {
+        const d = engine.runDetail(taskId);
+        return d ? send(res, 200, d) : send(res, 404, { error: '這個任務沒有 run' });
+      }
+      if (sub === 'artifacts' && name && req.method === 'GET') return send(res, 200, engine.readArtifactFile(taskId, name), 'text/plain; charset=utf-8');
+      if (sub === 'events' && !name && req.method === 'GET') return send(res, 200, engine.readEvents(taskId, url.searchParams.get('since')));
+      if (req.method === 'POST' && !name) {
+        if (sub === 'approve') { const b = await readBody(req); return send(res, 200, engine.approve(taskId, b.note)); }
+        if (sub === 'reject') { const b = await readBody(req); return send(res, 200, engine.reject(taskId, b.feedback ?? b.note ?? b.comment)); }
+        if (sub === 'retry') return send(res, 200, engine.retry(taskId));
+        if (sub === 'resolve') { const b = await readBody(req); return send(res, 200, engine.resolveRun(taskId, b.action)); }
+        if (sub === 'stop') { const r = await engine.stopRun(taskId); return send(res, r.ok ? 200 : 400, r); }
+      }
+      return send(res, 404, { error: 'not found' });
     }
     // 派工狀態 + 完整 log(任一任務都可查,不限剛派工的;會回目前這個 id 底下
     // board/runs/ 最新一次派工的完整內容,並附上歷史所有次數的檔名清單)
@@ -120,6 +155,14 @@ http.createServer(async (req, res) => {
     if (mLog && req.method === 'GET') {
       const id = mLog[1];
       const all = listRuns(id);
+      // 新引擎的 run 比舊單發派工的最新 log 新時,回引擎的 run(各 step raw log 串接)
+      const engStart = engine.latestRunStartedAt(id);
+      if (engStart && (all.length === 0 || engStart > all[0].ts)) {
+        const v = engine.logView(id);
+        const agentCfg = cfg().agents.find(a => a.id === v.agent);
+        const usage = agentCfg ? usageInRange(agentCfg, v.startedAt, v.endedAt || Date.now()) : null;
+        return send(res, 200, { ...v, usage });
+      }
       if (all.length === 0) return send(res, 200, { status: 'none', agent: null, pid: null, exitCode: null, log: null, content: '', truncated: false, runs: [], usage: null });
       const latest = all[0];
       const { content, truncated } = readLog(latest.file);
@@ -147,6 +190,7 @@ http.createServer(async (req, res) => {
     // 停止某任務目前的派工行程(整棵行程樹一起砍),成功後任務退回 todo
     const mStop = url.pathname.match(/^\/api\/tasks\/([\w-]+)\/stop$/);
     if (mStop && req.method === 'POST') {
+      if (engine.hasActiveRun(mStop[1])) { const r = await engine.stopRun(mStop[1]); return send(res, r.ok ? 200 : 400, r); }
       const r = await stopRun(mStop[1]);
       return send(res, r.ok ? 200 : 400, r);
     }
@@ -155,6 +199,7 @@ http.createServer(async (req, res) => {
     if (mDel && req.method === 'DELETE') {
       const id = mDel[1];
       const run = getRun(id);
+      if (engine.hasActiveRun(id)) await engine.stopRun(id);
       if (run && run.status === 'running') await stopRun(id);
       const file = path.join(tasksDir, id + '.md');
       if (!fs.existsSync(file)) return send(res, 404, { error: '找不到任務' });
@@ -164,5 +209,5 @@ http.createServer(async (req, res) => {
     const f = path.join(root, 'web', url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
     if (f.startsWith(path.join(root, 'web')) && fs.existsSync(f)) return send(res, 200, fs.readFileSync(f), 'text/html; charset=utf-8');
     send(res, 404, { error: 'not found' });
-  } catch (e) { send(res, 500, { error: String(e) }); }
+  } catch (e) { send(res, e.status || 500, { error: e.status ? e.message : String(e) }); }
 }).listen(+process.argv[2] || 4173, () => console.log('workboard on http://localhost:' + (+process.argv[2] || 4173)));
