@@ -1,0 +1,4 @@
+{"type":"init","timestamp":"2026-09-30T00:00:00.000Z","session_id":"SYNTHETIC-SESSION","model":"gemini-synthetic"}
+{"type":"message","timestamp":"2026-09-30T00:00:00.100Z","role":"user","content":"只回覆這三個字:READY OK。不要使用任何工具。"}
+{"type":"message","timestamp":"2026-09-30T00:00:01.000Z","role":"assistant","content":"READY OK","delta":true}
+{"type":"result","timestamp":"2026-09-30T00:00:01.200Z","status":"success","stats":{"total_tokens":100,"input_tokens":95,"output_tokens":5}}

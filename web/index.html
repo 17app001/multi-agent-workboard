@@ -9,7 +9,10 @@ h1{font-size:18px;margin:0 0 14px;font-weight:600}h2{font-size:13px;color:var(--
 .card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;box-shadow:var(--shadow)}
 .big{font-size:20px;font-weight:600}.mut{color:var(--mut);font-size:12px}
 .bar{display:flex;gap:2px;align-items:flex-end;height:28px;margin-top:6px}.bar i{flex:1;background:var(--accent2);min-height:1px;border-radius:1px}
-.cols{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:10px;overflow-x:auto}
+.cols{display:grid;grid-template-columns:repeat(5,minmax(200px,1fr));gap:10px;overflow-x:auto;max-width:100%}
+.cols>*{min-width:0}
+.card,.card *{overflow-wrap:anywhere;word-break:break-word}
+.card .mut{white-space:normal}
 .col{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:8px;min-height:120px}
 .col h3{font-size:12px;margin:4px 6px 10px;color:var(--mut);font-weight:600}
 .col[data-c=backlog]{background:#FAF6EF}
