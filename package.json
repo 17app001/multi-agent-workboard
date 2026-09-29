@@ -1,0 +1,2 @@
+{ "name": "multi-agent-workboard", "private": true, "type": "module",
+  "scripts": { "start": "node tools/server.mjs", "usage": "node -e \"import('./tools/usage.mjs').then(m=>console.table(m.collectUsage(JSON.parse(require('fs').readFileSync('agents.json')).agents).map(({days,...r})=>r)))\"" } }

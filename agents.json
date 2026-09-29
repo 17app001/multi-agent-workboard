@@ -1,0 +1,9 @@
+{
+  "agents": [
+    { "id": "claude",  "type": "claude", "label": "Claude Code", "home": "~/.claude" },
+    { "id": "codex-a", "type": "codex",  "label": "Codex A",     "home": "~/.codex" },
+    { "id": "codex-b", "type": "codex",  "label": "Codex B",     "home": "~/.codex-b" },
+    { "id": "gemini",  "type": "gemini", "label": "Gemini CLI",  "home": "~/.gemini" }
+  ],
+  "columns": ["backlog", "todo", "doing", "review", "done"]
+}

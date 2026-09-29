@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Multi-Agent Workboard</title>
+<style>
+:root{--bg:#f5f5f4;--card:#fff;--fg:#1c1917;--mut:#78716c;--line:#e7e5e4}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1917;--card:#292524;--fg:#fafaf9;--mut:#a8a29e;--line:#44403c}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif;padding:16px}
+h1{font-size:18px;margin:0 0 12px}h2{font-size:13px;color:var(--mut);text-transform:uppercase;margin:20px 0 8px}
+.usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
+.big{font-size:20px;font-weight:600}.mut{color:var(--mut);font-size:12px}
+.bar{display:flex;gap:2px;align-items:flex-end;height:28px;margin-top:6px}.bar i{flex:1;background:#6366f1;min-height:1px;border-radius:1px}
+.cols{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:8px;overflow-x:auto}
+.col{background:var(--bg);border:1px dashed var(--line);border-radius:8px;padding:6px;min-height:120px}
+.col.over{background:var(--line)}.col h3{font-size:12px;margin:4px 6px 8px}
+.t{cursor:grab;margin-bottom:6px}.t b{display:block;margin-bottom:4px}
+select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px}
+.p0{border-left:3px solid #ef4444}.p1{border-left:3px solid #f59e0b}.p2{border-left:3px solid #a8a29e}
+button{font:inherit;padding:4px 10px}
+</style>
+<h1>Multi-Agent Workboard <button id=add>+ 新任務</button></h1>
+<div class=usage id=usage></div>
+<h2>看板</h2><div class=cols id=cols></div>
+<script>
+const $=s=>document.querySelector(s),api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
+const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':n;
+let cfg,tasks;
+async function load(){cfg??=await api('config');tasks=await api('tasks');render();
+ api('usage').then(u=>{$('#usage').innerHTML=u.map(a=>{const mx=Math.max(1,...a.days.map(d=>d.total));
+  return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
+  <div class=big>${fmt(a.today)} <span class=mut>今日</span></div>
+  <div class=mut>7日 ${fmt(a.week)} · 累計 ${fmt(a.total)}</div>
+  <div class=mut>in ${fmt(a.input)} · cache ${fmt(a.cached)} · out ${fmt(a.output)}</div>
+  <div class=bar>${a.days.map(d=>`<i title="${d.date}: ${fmt(d.total)}" style="height:${d.total/mx*100}%"></i>`).join('')}</div>`
+  :`<div class=mut>找不到 log 目錄,請檢查 agents.json 的 home</div>`}</div>`}).join('')})}
+function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
+ tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
+ <select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
+ <span class=mut>${t.priority}</span></div>`).join('')}</div>`).join('')}
+const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
+document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
+document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
+document.addEventListener('drop',e=>{const c=e.target.closest('.col');if(c){e.preventDefault();post({id:e.dataTransfer.getData('id'),status:c.dataset.c})}});
+document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
+$('#add').onclick=()=>{const t=prompt('任務標題');if(t)post({title:t})};
+load();setInterval(load,15000);
+</script></html>
