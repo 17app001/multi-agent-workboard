@@ -15,15 +15,37 @@ h1{font-size:18px;margin:0 0 12px}h2{font-size:13px;color:var(--mut);text-transf
 .t{cursor:grab;margin-bottom:6px}.t b{display:block;margin-bottom:4px}
 select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px}
 .p0{border-left:3px solid #ef4444}.p1{border-left:3px solid #f59e0b}.p2{border-left:3px solid #a8a29e}
-button{font:inherit;padding:4px 10px}
+button{font:inherit;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button:hover{border-color:#6366f1}
+.t{display:flex;flex-direction:column;gap:4px}
+.t .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.badge{font-size:11px;padding:1px 7px;border-radius:99px;color:#fff;white-space:nowrap}
+.b-running{background:#3b82f6}.b-exited{background:#22c55e}.b-failed{background:#ef4444}
+.b-error{background:#ef4444}.b-stopped{background:#78716c}.b-unknown{background:#a8a29e}
+.iconbtn{padding:2px 7px;font-size:12px;line-height:1.4}
+.iconbtn.danger:hover{border-color:#ef4444;color:#ef4444}
+.iconbtn.stop:hover{border-color:#ef4444;color:#ef4444}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px}
+.modal[hidden]{display:none}
+.modalbox{background:var(--card);width:min(760px,100%);max-height:82vh;display:flex;flex-direction:column;border-radius:10px;padding:12px;border:1px solid var(--line)}
+.modalhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
+.modalhead .mut{font-size:12px}
+#logContent{overflow:auto;flex:1;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--bg);padding:8px;border-radius:6px;margin:0;border:1px solid var(--line)}
 </style>
 <h1>Multi-Agent Workboard <button id=add>+ 新任務</button></h1>
 <div class=usage id=usage></div>
 <h2>看板</h2><div class=cols id=cols></div>
+<div class=modal id=logModal hidden>
+  <div class=modalbox>
+    <div class=modalhead><b id=logTitle>Log</b><span class=mut id=logMeta></span><button id=logClose>✕ 關閉</button></div>
+    <pre id=logContent></pre>
+  </div>
+</div>
 <script>
 const $=s=>document.querySelector(s),api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
 const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':n;
-let cfg,tasks;
+const STATUS_LABEL={running:'執行中',exited:'已完成',failed:'失敗',error:'啟動失敗',stopped:'已停止',unknown:'狀態未知',none:'尚未派工過'};
+let cfg,tasks=[],runStatus={},openLogId=null;
 async function load(){cfg??=await api('config');tasks=await api('tasks');render();
  api('usage').then(u=>{$('#usage').innerHTML=u.map(a=>{const mx=Math.max(1,...a.days.map(d=>d.total));
   return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
@@ -33,17 +55,40 @@ async function load(){cfg??=await api('config');tasks=await api('tasks');render(
   <div class=mut>in ${fmt(a.input)} · cache ${fmt(a.cached)} · out ${fmt(a.output)}</div>
   <div class=bar>${a.days.map(d=>`<i title="${d.date}: ${fmt(d.total)}" style="height:${d.total/mx*100}%"></i>`).join('')}</div>`
   :`<div class=mut>${a.enabled===false?'未設定(已停用)':'未設定 / 尚無使用記錄'}</div>`}</div>`}).join('')})}
+function badge(t){const r=runStatus[t.id];if(!r||r.status==='none')return '';
+ return `<span class="badge b-${r.status}">${STATUS_LABEL[r.status]||r.status}</span>`}
 function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
  tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
- <select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
- <span class=mut>${t.priority}</span> ${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}</div>`).join('')}</div>`).join('')}
+ <div class=row><select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
+ <span class=mut>${t.priority}</span> ${badge(t)}</div>
+ <div class=row>${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}
+ ${runStatus[t.id]?.status==='running'?`<button class="iconbtn stop" data-stop=${t.id}>■ 停止</button>`:''}
+ <button class=iconbtn data-log=${t.id}>📜 log</button>
+ <button class="iconbtn danger" data-del=${t.id}>🗑 刪除</button></div></div>`).join('')}</div>`).join('')}
 const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
 document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
 document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
 document.addEventListener('drop',e=>{const c=e.target.closest('.col');if(c){e.preventDefault();post({id:e.dataTransfer.getData('id'),status:c.dataset.c})}});
-document.addEventListener('click',async e=>{const id=e.target.dataset?.run;if(!id)return;
- const r=await api('dispatch',{method:'POST',body:JSON.stringify({id})});alert(r.error||('已啟動,log: '+r.log));load()});
+async function fetchLog(id){try{runStatus[id]=await api('tasks/'+id+'/log')}catch(e){runStatus[id]={status:'unknown',content:'讀取失敗: '+e.message,runs:[]}}}
+function paintLog(){if(!openLogId)return;const r=runStatus[openLogId];if(!r)return;
+ $('#logTitle').textContent='Log: '+openLogId;
+ $('#logMeta').textContent=`${r.agent?('agent: '+r.agent+' · '):''}狀態: ${STATUS_LABEL[r.status]||r.status}${r.runs&&r.runs.length>1?(' · 共 '+r.runs.length+' 次派工紀錄'):''}`;
+ const pre=$('#logContent');
+ pre.textContent=(r.truncated?'...(log 太長,只顯示最後一段)...\n':'')+(r.content||'(尚無輸出)');
+ pre.scrollTop=pre.scrollHeight}
+async function openLog(id){openLogId=id;$('#logModal').hidden=false;await fetchLog(id);paintLog()}
+function closeLog(){openLogId=null;$('#logModal').hidden=true}
+async function refreshActive(){const ids=new Set(tasks.filter(t=>t.status==='doing').map(t=>t.id));if(openLogId)ids.add(openLogId);
+ if(ids.size===0)return;await Promise.all([...ids].map(fetchLog));render();paintLog()}
+document.addEventListener('click',async e=>{
+ const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del;
+ if(run){const r=await api('dispatch',{method:'POST',body:JSON.stringify({id:run})});if(r.error){alert(r.error)}else{await load();openLog(run)}return}
+ if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
+ if(logId){openLog(logId);return}
+ if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
+});
 document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
 $('#add').onclick=()=>{const t=prompt('任務標題');if(t)post({title:t})};
-load();setInterval(load,15000);
+$('#logClose').onclick=closeLog;
+load();setInterval(load,15000);setInterval(refreshActive,3000);
 </script></html>
