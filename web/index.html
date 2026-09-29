@@ -1,36 +1,52 @@
 <!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Multi-Agent Workboard</title>
 <style>
-:root{--bg:#f5f5f4;--card:#fff;--fg:#1c1917;--mut:#78716c;--line:#e7e5e4}
-@media(prefers-color-scheme:dark){:root{--bg:#1c1917;--card:#292524;--fg:#fafaf9;--mut:#a8a29e;--line:#44403c}}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif;padding:16px}
-h1{font-size:18px;margin:0 0 12px}h2{font-size:13px;color:var(--mut);text-transform:uppercase;margin:20px 0 8px}
-.usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px}
+:root{--bg:#F7F1E8;--card:#FDFBF7;--fg:#3A332C;--mut:#8A8072;--line:#E8DFD1;--accent:#C97B4A;--accent-hover:#B5693B;--accent2:#6E9B93;--danger:#B5564A;--shadow:0 2px 8px rgba(60,50,40,.08)}
+@media(prefers-color-scheme:dark){:root{--bg:#2A241C;--card:#372F24;--fg:#F0E9DC;--mut:#B8AD9A;--line:#4A4030;--shadow:0 2px 10px rgba(0,0,0,.35)}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px -apple-system,"Segoe UI","Noto Sans TC",sans-serif;padding:16px}
+h1{font-size:18px;margin:0 0 14px;font-weight:600}h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;margin:22px 0 10px}
+.usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;box-shadow:var(--shadow)}
 .big{font-size:20px;font-weight:600}.mut{color:var(--mut);font-size:12px}
-.bar{display:flex;gap:2px;align-items:flex-end;height:28px;margin-top:6px}.bar i{flex:1;background:#6366f1;min-height:1px;border-radius:1px}
-.cols{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:8px;overflow-x:auto}
-.col{background:var(--bg);border:1px dashed var(--line);border-radius:8px;padding:6px;min-height:120px}
-.col.over{background:var(--line)}.col h3{font-size:12px;margin:4px 6px 8px}
-.t{cursor:grab;margin-bottom:6px}.t b{display:block;margin-bottom:4px}
-select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px}
-.p0{border-left:3px solid #ef4444}.p1{border-left:3px solid #f59e0b}.p2{border-left:3px solid #a8a29e}
-button{font:inherit;padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
-button:hover{border-color:#6366f1}
+.bar{display:flex;gap:2px;align-items:flex-end;height:28px;margin-top:6px}.bar i{flex:1;background:var(--accent2);min-height:1px;border-radius:1px}
+.cols{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:10px;overflow-x:auto}
+.col{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:8px;min-height:120px}
+.col h3{font-size:12px;margin:4px 6px 10px;color:var(--mut);font-weight:600}
+.col[data-c=backlog]{background:#FAF6EF}
+.col[data-c=todo]{background:#FCF3D9}
+.col[data-c=doing]{background:#E8F0F3}
+.col[data-c=review]{background:#FBE9DD}
+.col[data-c=done]{background:#E9F3E6}
+@media(prefers-color-scheme:dark){
+.col[data-c=backlog]{background:#332C22}
+.col[data-c=todo]{background:#3D3620}
+.col[data-c=doing]{background:#243136}
+.col[data-c=review]{background:#3D2C22}
+.col[data-c=done]{background:#243024}
+}
+.col.over{background:#F0E6D0}
+.t{cursor:grab;margin-bottom:8px}.t b{display:block;margin-bottom:4px}
+select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:3px 6px}
+.p0{border-left:4px solid var(--accent)}.p1{border-left:4px solid var(--accent2)}.p2{border-left:4px solid #D8CBA0}
+button{font:inherit;padding:5px 12px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;box-shadow:var(--shadow)}
+button:hover{border-color:var(--accent)}
+button#add,button[data-run]{background:var(--accent);color:#fff;border-color:var(--accent)}
+button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .t{display:flex;flex-direction:column;gap:4px}
 .t .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.badge{font-size:11px;padding:1px 7px;border-radius:99px;color:#fff;white-space:nowrap}
-.b-running{background:#3b82f6}.b-exited{background:#22c55e}.b-failed{background:#ef4444}
-.b-error{background:#ef4444}.b-stopped{background:#78716c}.b-unknown{background:#a8a29e}
-.iconbtn{padding:2px 7px;font-size:12px;line-height:1.4}
-.iconbtn.danger:hover{border-color:#ef4444;color:#ef4444}
-.iconbtn.stop:hover{border-color:#ef4444;color:#ef4444}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px}
+.badge{font-size:11px;font-weight:600;padding:2px 9px 2px 7px;border-radius:99px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.b-running{background:#E8F0F3;color:#4C7A82}.b-exited{background:#E9F3E6;color:#4F7A56}.b-failed{background:#FBE3DE;color:var(--danger)}
+.b-error{background:#FBE3DE;color:var(--danger)}.b-stopped{background:#EFE9DE;color:var(--mut)}.b-unknown{background:#F1ECE2;color:var(--mut)}
+.iconbtn{padding:2px 8px;font-size:12px;line-height:1.4}
+.iconbtn.danger:hover{border-color:var(--danger);color:var(--danger)}
+.iconbtn.stop:hover{border-color:var(--danger);color:var(--danger)}
+.modal{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;padding:16px}
 .modal[hidden]{display:none}
-.modalbox{background:var(--card);width:min(760px,100%);max-height:82vh;display:flex;flex-direction:column;border-radius:10px;padding:12px;border:1px solid var(--line)}
-.modalhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
+.modalbox{background:var(--card);width:min(760px,100%);max-height:82vh;display:flex;flex-direction:column;border-radius:14px;padding:14px;border:1px solid var(--line);box-shadow:var(--shadow)}
+.modalhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
 .modalhead .mut{font-size:12px}
-#logContent{overflow:auto;flex:1;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--bg);padding:8px;border-radius:6px;margin:0;border:1px solid var(--line)}
+#logContent{overflow:auto;flex:1;white-space:pre-wrap;word-break:break-all;font:12px/1.5 ui-monospace,Consolas,monospace;background:var(--bg);padding:10px;border-radius:8px;margin:0;border:1px solid var(--line)}
 </style>
 <h1>Multi-Agent Workboard <button id=add>+ 新任務</button></h1>
 <div class=usage id=usage></div>
