@@ -96,6 +96,7 @@ function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c
  tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
  <div class=row><select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
  <span class=mut>${t.priority}</span> ${badge(t)}</div>
+ ${t.files?`<div class=mut>📁 ${t.files}</div>`:''}
  <div class=row>${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}
  ${runStatus[t.id]?.status==='running'?`<button class="iconbtn stop" data-stop=${t.id}>■ 停止</button>`:''}
  <button class=iconbtn data-log=${t.id}>📜 log</button>
@@ -118,13 +119,16 @@ async function refreshActive(){const ids=new Set(tasks.filter(t=>t.status==='doi
  await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);render();paintLog()}
 document.addEventListener('click',async e=>{
  const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del;
- if(run){const r=await api('dispatch',{method:'POST',body:JSON.stringify({id:run})});if(r.error){alert(r.error)}else{await load();openLog(run)}return}
+ if(run){const dispatchNow=async force=>{const body=force?{id:run,force:true}:{id:run};const r=await api('dispatch',{method:'POST',body:JSON.stringify(body)});
+  if(r.conflict){if(confirm(r.error+'\n\n仍要繼續派工嗎?'))await dispatchNow(true);return}
+  if(r.error){alert(r.error)}else{await load();openLog(run)}};
+  await dispatchNow(false);return}
  if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
  if(logId){openLog(logId);return}
  if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
 });
 document.addEventListener('change',e=>{if(e.target.matches('select'))post({id:e.target.dataset.id,agent:e.target.value})});
-$('#add').onclick=()=>{const t=prompt('任務標題');if(t)post({title:t})};
+$('#add').onclick=()=>{const t=prompt('任務標題');if(!t)return;const f=prompt('會動到哪些檔案?(逗號分隔,可留空,例如 tools/usage.mjs,web/index.html)')||'';post({title:t,files:f})};
 $('#logClose').onclick=closeLog;
 $('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};
 updateNotifyBtn();

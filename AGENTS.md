@@ -35,8 +35,9 @@
 
 ## 任務板
 - 一件任務 = `board/tasks/<id>.md`,狀態寫在 frontmatter,不要另外維護清單。
-- frontmatter 欄位:`title` `status` `agent` `priority`(p0-p2) `updated`
+- frontmatter 欄位:`title` `status` `agent` `priority`(p0-p2) `updated` `files`(可選,逗號分隔的相對路徑或目錄前綴,例如 `tools/usage.mjs,web/index.html`,宣告這張任務會動到哪些檔案)
 - `status` 只能是 `agents.json` 的 columns:backlog / todo / doing / review / done
+- 有填 `files` 的任務,派工前系統會檢查是否跟目前「執行中」的其他任務宣告的 `files` 重疊(完全相同或互為目錄前綴視為衝突);有衝突會擋下派工並回報衝突的任務與檔案,除非帶 `force:true` 略過檢查改為強制派工。沒填 `files` 的任務不受此檢查影響,派工行為跟以前一樣。
 
 ## 工作流程
 1. 只領 `agent:` 是自己 id、且 `status: todo` 的任務,領取後改為 `doing`。
