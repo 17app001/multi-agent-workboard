@@ -49,18 +49,24 @@ function codex(home) {
   return byDay;
 }
 
-// Gemini CLI: ~/.gemini/tmp/*/chats/session-*.json,messages[].tokens = {input,output,cached,thoughts,total}
+// Gemini CLI: ~/.gemini/tmp/*/chats/session-*.jsonl —— 每行一筆 JSON(不是單一 JSON 檔包 messages 陣列,
+// 且副檔名是 .jsonl 不是 .json,原本的 walk(home,'.json') 用 endsWith 比對永遠比對不到任何檔案)。
+// 第一行是 session meta({sessionId,startTime,...}),之後每行是一筆事件,type:"gemini" 的訊息帶
+// tokens:{input,output,cached,thoughts,tool,total}。實測驗證:total === input + output + thoughts + tool
+// (cached 不併入 total,代表 input 欄位本身已是「非快取」的新 token 數,不能再減一次 cached)。
+// 同一個訊息 id 會因後續補上 toolCalls 而重複出現一行、tokens 值相同,需以 id 去重避免重複計入。
 function gemini(home) {
-  const byDay = {};
-  for (const f of walk(path.join(home, 'tmp'), '.json')) {
+  const byDay = {}, seen = new Set();
+  for (const f of walk(path.join(home, 'tmp'), '.jsonl')) {
     if (!f.includes(`${path.sep}chats${path.sep}`)) continue;
-    const o = j(fs.readFileSync(f, 'utf8')); if (!o?.messages) continue;
-    for (const m of o.messages) {
-      const t = m.tokens; if (!t) continue;
-      const d = (byDay[day(m.timestamp)] ??= empty());
-      d.input += (t.input || 0) - (t.cached || 0);
+    for (const l of lines(f)) {
+      const o = j(l); const t = o?.tokens;
+      if (!o?.id || !t) continue;
+      if (seen.has(o.id)) continue; seen.add(o.id);
+      const d = (byDay[day(o.timestamp)] ??= empty());
+      d.input += t.input || 0;
       d.cached += t.cached || 0;
-      d.output += (t.output || 0) + (t.thoughts || 0);
+      d.output += (t.output || 0) + (t.thoughts || 0) + (t.tool || 0);
     }
   }
   return byDay;
