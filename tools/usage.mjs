@@ -42,9 +42,12 @@ function codex(home) {
     }
     if (!last) continue;
     const d = (byDay[day(ts || fs.statSync(f).mtime)] ??= empty());
+    // 已核對 ~/.codex/sessions 原始資料:total_tokens = input_tokens + output_tokens,
+    // reasoning_output_tokens 是 output_tokens 的子集,原本再加一次會重複計算(灌水)。
+    // cached_input_tokens 則確認是 input_tokens 的子集,從 input 減掉、另計是對的,不用改。
     d.input += (last.input_tokens || 0) - (last.cached_input_tokens || 0);
     d.cached += last.cached_input_tokens || 0;
-    d.output += (last.output_tokens || 0) + (last.reasoning_output_tokens || 0);
+    d.output += last.output_tokens || 0;
   }
   return byDay;
 }
