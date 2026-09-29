@@ -11,7 +11,7 @@ const tasksDir = path.join(root, 'board/tasks');
 const cfg = () => JSON.parse(fs.readFileSync(path.join(root, 'agents.json'), 'utf8'));
 
 function parse(file) {
-  const raw = fs.readFileSync(path.join(tasksDir, file), 'utf8');
+  const raw = fs.readFileSync(path.join(tasksDir, file), 'utf8').replace(/\r\n/g, '\n');
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   const meta = {};
   for (const l of (m?.[1] || '').split('\n')) { const i = l.indexOf(':'); if (i > 0) meta[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
