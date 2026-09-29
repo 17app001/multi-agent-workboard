@@ -14,7 +14,15 @@ function* walk(dir, ext) {
 }
 const lines = f => { try { return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean); } catch { return []; } };
 const j = s => { try { return JSON.parse(s); } catch { return null; } };
-const day = ts => (ts ? new Date(ts).toISOString().slice(0, 10) : 'unknown');
+// 用本機時區切日期(YYYY-MM-DD)。toISOString() 是 UTC,在 UTC+8 這種機器上,午夜到早上 8 點之間
+// 的紀錄會被切到「昨天」,導致「今日」用量算成 0。改用 Date 的 local getter 組字串。
+const pad2 = n => String(n).padStart(2, '0');
+const day = ts => {
+  const d = ts ? new Date(ts) : null;
+  if (!d || isNaN(d)) return 'unknown';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+const todayLocal = () => day(new Date());
 const empty = () => ({ input: 0, output: 0, cached: 0, total: 0 });
 
 // Claude Code: ~/.claude/projects/**/*.jsonl,assistant 訊息帶 message.usage;以 message.id 去重
@@ -86,8 +94,9 @@ export function collectUsage(agents) {
     const pr = a.price || {};
     const cost = d => ((d.input * (pr.input || 0)) + (d.cached * (pr.cached || 0)) + (d.output * (pr.output || 0))) / 1e6;
     for (const d of days) d.cost = cost(d);
-    const today = new Date().toISOString().slice(0, 10);
-    const weekAgo = new Date(Date.now() - 6 * 864e5).toISOString().slice(0, 10);
+    // 用本機時區(不是 UTC)判斷「今天」與「近 7 日」的日期邊界。
+    const today = todayLocal();
+    const weekAgo = day(Date.now() - 6 * 864e5);
     return {
       id: a.id, label: a.label, type: a.type, found: !!byDay,
       today: days.filter(d => d.date === today).reduce((s, d) => s + d.total, 0),
