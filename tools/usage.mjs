@@ -87,8 +87,12 @@ const parsers = { claude, codex, gemini };
 
 export function collectUsage(agents) {
   return agents.map(a => {
+    // enabled:false = 使用者主動停用這個 agent(例如 home 目錄還沒建立/不打算用),
+    // 不嘗試解析、也不當成錯誤。home 目錄不存在(未設定)本身也不是錯誤,一樣回傳 found:false。
+    const enabled = a.enabled !== false;
     const home = expand(a.home);
-    const byDay = fs.existsSync(home) ? parsers[a.type](home) : null;
+    const homeExists = enabled && fs.existsSync(home);
+    const byDay = homeExists ? parsers[a.type](home) : null;
     const days = Object.entries(byDay || {}).sort().map(([date, v]) => ({ date, ...v, total: v.input + v.cached + v.output }));
     const sum = k => days.reduce((s, d) => s + d[k], 0);
     const pr = a.price || {};
@@ -99,6 +103,7 @@ export function collectUsage(agents) {
     const weekAgo = day(Date.now() - 6 * 864e5);
     return {
       id: a.id, label: a.label, type: a.type, found: !!byDay,
+      enabled, configured: homeExists,
       today: days.filter(d => d.date === today).reduce((s, d) => s + d.total, 0),
       week: days.filter(d => d.date >= weekAgo).reduce((s, d) => s + d.total, 0),
       costToday: days.filter(d => d.date === today).reduce((s, d) => s + d.cost, 0),

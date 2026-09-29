@@ -32,7 +32,7 @@ async function load(){cfg??=await api('config');tasks=await api('tasks');render(
   <div class=mut>≈ $${a.costToday.toFixed(2)} 今日 · $${a.costWeek.toFixed(2)} 7日 · $${a.costTotal.toFixed(2)} 累計</div>
   <div class=mut>in ${fmt(a.input)} · cache ${fmt(a.cached)} · out ${fmt(a.output)}</div>
   <div class=bar>${a.days.map(d=>`<i title="${d.date}: ${fmt(d.total)}" style="height:${d.total/mx*100}%"></i>`).join('')}</div>`
-  :`<div class=mut>找不到 log 目錄,請檢查 agents.json 的 home</div>`}</div>`}).join('')})}
+  :`<div class=mut>${a.enabled===false?'未設定(已停用)':'未設定 / 尚無使用記錄'}</div>`}</div>`}).join('')})}
 function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
  tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
  <select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>

@@ -35,6 +35,7 @@
       "id": "codex-b",
       "type": "codex",
       "label": "Codex B",
+      "enabled": false,
       "home": "~/.codex-b",
       "args": [
         "exec",
@@ -70,5 +71,5 @@
     "review",
     "done"
   ],
-  "_note": "price = USD per 1M tokens(API 等值估算,請依你實際使用的模型改);args = 派工時傳給 CLI 的參數,prompt 會接在最後"
+  "_note": "price = USD per 1M tokens(API 等值估算,請依你實際使用的模型改);args = 派工時傳給 CLI 的參數,prompt 會接在最後;enabled:false = 停用該 agent(用量卡片顯示未設定,不解析、不當錯誤)"
 }
