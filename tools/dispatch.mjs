@@ -143,6 +143,18 @@ export function getRun(id) {
   return refreshRunStatus(run);
 }
 
+// 列出目前記憶體 runs 裡狀態是 running 的所有任務(給任務衝突防呆用:要知道
+// 「現在有哪些任務正在執行中」才能檢查 files 是否重疊)。會先對每筆紀錄核對一次
+// pid 是否還活著(refreshRunStatus),避免把已經結束、只是狀態沒更新的紀錄也算進去。
+export function listActiveRuns() {
+  const out = [];
+  for (const [id, run] of runs) {
+    const r = refreshRunStatus(run);
+    if (r && r.status === 'running') out.push({ id, pid: r.pid, agent: r.agent, log: r.log, startedAt: r.startedAt });
+  }
+  return out;
+}
+
 // 列出某任務所有派工紀錄的 log 檔(board/runs/<id>-<timestamp>.log),新到舊排序
 export function listRuns(id) {
   if (!fs.existsSync(runsDir)) return [];
