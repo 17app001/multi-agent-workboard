@@ -3,18 +3,73 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, exec } from 'node:child_process';
+import { spawn, exec, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runsDir = path.join(root, 'board/runs');
+const stateFile = path.join(runsDir, 'state.json');
 const expand = p => p.replace(/^~/, os.homedir());
 
-// id -> { pid, log(相對路徑), agent, startedAt, status, exitCode, error }
+// id -> { pid, log(相對路徑), agent, startedAt, status, exitCode, error, live }
 // status: 'running' | 'exited' | 'failed' | 'error' | 'stopped'
-// 只存在記憶體裡,server 重啟就會遺失(重啟後該任務的即時狀態會顯示 unknown,
-// 但 log 檔本身還在,仍可讀取內容)。
+// live: 只存在記憶體,不落地。true 表示這個 run 是本次 server 行程親自 spawn 的,
+// 掛了 exit/error listener,狀態變化會即時反映;false 表示是從 board/runs/state.json
+// 讀回來的紀錄(可能是上一次 server 行程留下的),沒有 listener 可用,狀態需要在
+// 查詢時(getRun/stopRun)當場用 isPidRunning() 問一次 OS 才能確認是否還在跑。
+//
+// 持久化策略:每次 runs 有變動就整份寫回 state.json(不開背景輪詢/定時器,只在
+// dispatch/exit/error/stop 這些事件發生、或 API 被呼叫時順手存檔或核對一次)。
 const runs = new Map();
+
+function saveState() {
+  const obj = {};
+  for (const [id, r] of runs) {
+    obj[id] = { pid: r.pid, log: r.log, agent: r.agent, startedAt: r.startedAt, status: r.status, exitCode: r.exitCode, error: r.error };
+  }
+  try {
+    fs.mkdirSync(runsDir, { recursive: true });
+    fs.writeFileSync(stateFile, JSON.stringify(obj, null, 2));
+  } catch { /* 落地失敗不影響派工本身,忽略即可 */ }
+}
+
+function loadState() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    for (const [id, r] of Object.entries(obj)) runs.set(id, { ...r, live: false });
+  } catch { /* 檔案不存在或損毀,當作沒有任何歷史紀錄 */ }
+}
+loadState();
+
+// 問 OS 這個 pid 是否還存在(不看記憶體狀態,直接查行程表,server 重啟後
+// 靠這個分辨「真的還在跑」跟「其實已經結束但沒人記錄到」)。
+function isPidRunning(pid) {
+  if (!pid) return false;
+  if (process.platform === 'win32') {
+    try {
+      // 不能用「找不到」訊息的英文字串比對(這台機器 Windows 語系是中文,
+      // tasklist 的「查無此工作」訊息是中文,不會出現 "No tasks";已實測撞過
+      // 這個坑:比對英文字串會導致所有已結束的行程被誤判成還在跑)。
+      // 改成看輸出裡有沒有出現這個 pid 本身當作獨立數字 token:找到時該行會
+      // 印出這個 pid;查無此工作的訊息裡不含任何數字,不會誤判。
+      const out = execSync(`tasklist /fi "PID eq ${pid}" /nh`, { encoding: 'utf8', windowsHide: true });
+      return new RegExp('\\b' + pid + '\\b').test(out);
+    } catch { return false; }
+  }
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+// 對於「不是本次行程親自 spawn」的 running 紀錄(live:false,從 state.json 讀回來的),
+// 每次被查詢時當場核對一次 pid 是否還存在,避免重啟後誤判成還在跑。
+function refreshRunStatus(run) {
+  if (run && run.status === 'running' && !run.live) {
+    if (!isPidRunning(run.pid)) {
+      run.status = 'exited';
+      saveState();
+    }
+  }
+  return run;
+}
 
 // --- Windows 上安全啟動 .cmd/.bat CLI(claude/codex/gemini 若用 npm 全域安裝,
 // 實際執行檔常常只有 gemini.cmd 這種殼,沒有 .exe)---
@@ -83,7 +138,9 @@ function spawnCli(cmd, args, opts) {
 }
 
 export function getRun(id) {
-  return runs.get(id) || null;
+  const run = runs.get(id);
+  if (!run) return null;
+  return refreshRunStatus(run);
 }
 
 // 列出某任務所有派工紀錄的 log 檔(board/runs/<id>-<timestamp>.log),新到舊排序
@@ -117,11 +174,13 @@ function revertToTodo(file, note) {
 export function stopRun(id) {
   const run = runs.get(id);
   if (!run || !run.pid) return Promise.resolve({ ok: false, error: '找不到這個任務目前的執行紀錄(可能是 server 重啟後遺失,或本來就沒在跑)' });
+  refreshRunStatus(run); // server 重啟後 run 是從 state.json 讀回來的,先當場核對一次 pid 是否還存在
   if (run.status !== 'running') return Promise.resolve({ ok: false, error: '行程已經結束(狀態: ' + run.status + ')' });
   return new Promise(resolve => {
     exec(`taskkill /pid ${run.pid} /T /F`, (err, stdout, stderr) => {
       if (err) { resolve({ ok: false, error: (stderr || err.message || '').trim() || 'taskkill 失敗' }); return; }
       run.status = 'stopped';
+      saveState();
       const file = path.join(root, 'board/tasks', id + '.md');
       revertToTodo(file, `使用者手動停止 (${new Date().toISOString()})`);
       resolve({ ok: true });
@@ -156,21 +215,23 @@ export function dispatch(id) {
   } catch (e) {
     fs.appendFileSync(log, '\n[dispatch] 無法啟動 ' + agent.cmd + ': ' + e.message + '\n');
     revertToTodo(file, `dispatch 失敗(啟動錯誤): ${e.message},見 ${relLog}`);
-    runs.set(id, { pid: null, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'error', exitCode: null, error: e.message });
+    runs.set(id, { pid: null, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'error', exitCode: null, error: e.message, live: true });
+    saveState();
     throw new Error('啟動 ' + agent.cmd + ' 失敗: ' + e.message);
   }
 
-  runs.set(id, { pid: child.pid, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'running', exitCode: null, error: null });
+  runs.set(id, { pid: child.pid, log: relLog, agent: agent.id, startedAt: Date.now(), status: 'running', exitCode: null, error: null, live: true });
+  saveState();
 
   child.on('error', e => {
     fs.appendFileSync(log, '\n[dispatch] 無法啟動 ' + agent.cmd + ': ' + e.message + '\n');
-    const run = runs.get(id); if (run) { run.status = 'error'; run.error = e.message; }
+    const run = runs.get(id); if (run) { run.status = 'error'; run.error = e.message; saveState(); }
     revertToTodo(file, `dispatch 失敗: ${e.message},見 ${relLog}`);
   });
   child.on('exit', code => {
     fs.appendFileSync(log, `\n[dispatch] exit ${code}\n`);
     const run = runs.get(id);
-    if (run && run.status === 'running') { run.status = code === 0 ? 'exited' : 'failed'; run.exitCode = code; }
+    if (run && run.status === 'running') { run.status = code === 0 ? 'exited' : 'failed'; run.exitCode = code; saveState(); }
     if (code !== 0) revertToTodo(file, `dispatch 失敗 (exit ${code}),見 ${relLog}`);
   });
   child.unref();
