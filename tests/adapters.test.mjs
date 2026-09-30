@@ -47,6 +47,21 @@ test('codex buildCommand', () => {
   assert.deepEqual(e.env, {});
 });
 
+test('quota exhaustion detection stays conservative', () => {
+  const codex = registry.codex;
+  const withReset = codex.detectQuotaExhaustion('You have hit your usage limit. Try again at 11:59 PM.');
+  assert.equal(withReset.exhausted, true);
+  assert.ok(withReset.until > Date.now());
+  assert.ok(withReset.until < Date.now() + 25 * 60 * 60 * 1000);
+  const withoutReset = codex.detectQuotaExhaustion('usage limit reached');
+  assert.equal(withoutReset.exhausted, true);
+  assert.equal(withoutReset.until, undefined);
+  assert.deepEqual(codex.detectQuotaExhaustion('rate limit while uploading'), { exhausted: false });
+  for (const type of ['claude', 'agy', 'gemini']) {
+    assert.deepEqual(registry[type].detectQuotaExhaustion('usage limit Try again at 11:59 PM'), { exhausted: false });
+  }
+});
+
 test('gemini buildCommand', () => {
   const c = registry.gemini;
   for (const mode of ['plan', 'review']) {

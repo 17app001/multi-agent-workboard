@@ -55,3 +55,4 @@ export function parseLineEvents(line) {
 }
 
 export function parseLine(line) { return parseLineEvents(line)[0] || null; }
+export const detectQuotaExhaustion = () => ({ exhausted: false });

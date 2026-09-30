@@ -79,6 +79,9 @@
       "cmd": "agy"
     }
   ],
+  "pools": {
+    "codex": ["codex-b", "codex-a"]
+  },
   "columns": [
     "backlog",
     "todo",

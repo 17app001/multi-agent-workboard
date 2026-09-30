@@ -48,3 +48,18 @@ export function parseLineEvents(line) {
 }
 
 export function parseLine(line) { return parseLineEvents(line)[0] || null; }
+
+// Only recognize Codex's explicit usage-limit wording.  The clock has no date,
+// so use today unless that time has already passed (then use tomorrow).
+export function detectQuotaExhaustion(raw) {
+  const text = String(raw || '');
+  if (!/usage\s+limit/i.test(text)) return { exhausted: false };
+  const match = /try\s+again\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(text);
+  if (!match) return { exhausted: true, detail: 'usage limit (reset time unavailable)' };
+  let hour = Number(match[1]) % 12;
+  if (match[3].toUpperCase() === 'PM') hour += 12;
+  const until = new Date();
+  until.setHours(hour, Number(match[2]), 0, 0);
+  if (until.getTime() <= Date.now()) until.setDate(until.getDate() + 1);
+  return { exhausted: true, until: until.getTime(), detail: match[0] };
+}

@@ -89,9 +89,11 @@ before(async () => {
   const price = { input: 0, cached: 0, output: 0 };
   fs.writeFileSync(path.join(sandbox, 'agents.json'), JSON.stringify({
     columns: ['backlog', 'todo', 'doing', 'review', 'done'],
+    pools: { codex: ['codex-b', 'codex-a'] },
     agents: [
       { id: 'claude', type: 'claude', label: 'Fake Claude', home: path.join(sandbox, 'h1'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
       { id: 'codex-a', type: 'codex', label: 'Fake Codex', home: path.join(sandbox, 'h2'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
+      { id: 'codex-b', type: 'codex', label: 'Fake Codex B', home: path.join(sandbox, 'h4'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
       { id: 'agy-a', type: 'agy', label: 'Fake Agy', home: path.join(sandbox, 'h3'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
     ],
   }));
@@ -113,6 +115,7 @@ before(async () => {
   wp({ id: 'hang', steps: [gatedPlan, work()] });
   wp({ id: 'perm', steps: [gatedPlan, work()] });
   wp({ id: 'tmo', steps: [gatedPlan, work({ timeoutMs: 800 })] });
+  wp({ id: 'poolplan', steps: [{ id: 'plan', pool: 'codex', mode: 'plan', output: 'plan.md', gate: 'human' }, { id: 'code', pool: 'codex', mode: 'execute', input: ['plan.md'] }] });
   // 安全測試用:第一步就是 execute、沒有 human gate(必須被驗證器拒絕)
   wp({ id: 'unsafe', steps: [{ id: 'code', agent: 'codex-a', mode: 'execute' }] });
   wp({ id: 'agyflow', maxRevisions: 0, steps: [
@@ -175,6 +178,70 @@ test('(a) artifact input 必須由「更早的 step」的 output 產生', () => 
   assert.match(errs({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', input: ['nope.md'] }] }), /input "nope\.md" 不是任何「更早的 step」的 output/);
   assert.match(errs({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', input: ['b.md'] }, { id: 'b', agent: 'claude', mode: 'plan', output: 'b.md' }] }), /input "b\.md"/, '產出者在後面不算');
   assert.equal(engineMod.validatePipeline({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', output: 'a.md' }, { id: 'c', type: 'command', command: 'x' }, { id: 'b', agent: 'claude', mode: 'plan', input: ['a.md', 'c.txt'] }] }, agents).ok, true, 'command 未宣告 output 時預設 <id>.txt 也算產出');
+});
+
+test('(a) pool 驗證與 Codex quota failover 會保留 human gate', async () => {
+  const config = JSON.parse(fs.readFileSync(path.join(sandbox, 'agents.json'), 'utf8'));
+  const agents = config.agents;
+  const P = { id: 'plan', pool: 'codex', mode: 'plan', output: 'plan.md', gate: 'human' };
+  const X = { id: 'code', pool: 'codex', mode: 'execute', input: ['plan.md'] };
+  assert.equal(engineMod.validatePipeline({ id: 'pool-ok', steps: [P, X] }, agents, config.pools).ok, true);
+  assert.match(engineMod.validatePipeline({ id: 'bad', steps: [{ ...P, agent: 'codex-a' }] }, agents, config.pools).errors.join('|'), /只能指定 agent 或 pool/);
+  assert.match(engineMod.validatePipeline({ id: 'bad', steps: [{ ...P, pool: 'missing' }] }, agents, config.pools).errors.join('|'), /不存在或是空/);
+  const id = 't-pool-failover';
+  await mkTask(id, { pipeline: 'poolplan', control: { quotaOnce: 'plan' } });
+  const d = await dispatch(id);
+  assert.equal(d.status, 200, JSON.stringify(d.json));
+  const waiting = await waitNeeds(id, 'approval');
+  assert.equal(waiting.steps[0].agent, 'codex-a');
+  assert.equal(waiting.steps[0].attempts, 2);
+  assert.equal(callsOf(id, 'execute').length, 0, 'plan gate 前不得開始 execute');
+  const events = (await api(`/api/runs/${id}/events`)).json;
+  assert.ok(events.some(e => e.kind === 'error' && e.phase === 'failover' && e.oldAgent === 'codex-b' && e.newAgent === 'codex-a'));
+  const cooldowns = JSON.parse(fs.readFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), 'utf8'));
+  assert.ok(cooldowns['codex-b'].until > Date.now());
+  assert.equal((await post(`/api/runs/${id}/approve`)).status, 200);
+  await waitStatus(id, 'completed');
+});
+
+test('(a) pool 全員額度耗盡會 blocked 並進 needs-you；冷卻到期後 retry 可再次選人', async () => {
+  const id = 't-pool-exhausted';
+  await mkTask(id, { pipeline: 'poolplan', control: { quota: 'plan' } });
+  assert.equal((await dispatch(id)).status, 200);
+  const run = await waitNeeds(id, 'no-agent-available');
+  assert.equal(run.steps[0].status, 'blocked');
+  assert.match(run.needsYou.message, /codex-b: cooldown until/);
+  assert.match(run.needsYou.message, /codex-a: cooldown until/);
+  const events = (await api(`/api/runs/${id}/events`)).json;
+  assert.ok(events.some(e => e.phase === 'failover' && e.oldAgent === 'codex-a' && e.newAgent === null));
+
+  // Simulate both reset times passing. The retry must not retain stale
+  // same-step attempts as a permanent exclusion.
+  fs.writeFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), JSON.stringify({
+    'codex-b': { until: Date.now() - 1 }, 'codex-a': { until: Date.now() - 1 },
+  }));
+  fs.writeFileSync(path.join(run.cwd, 'fake-control.json'), JSON.stringify({}));
+  assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'retry' })).status, 200);
+  const approved = await waitNeeds(id, 'approval');
+  assert.equal(approved.steps[0].agent, 'codex-b');
+});
+
+test('(a) 新 run 略過未到期 cooldown；非 quota 失敗不會換手', async () => {
+  fs.writeFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), JSON.stringify({
+    'codex-b': { until: Date.now() + 60_000, reason: 'quota-exhausted' },
+  }));
+  await mkTask('t-pool-cooldown', { pipeline: 'poolplan' });
+  assert.equal((await dispatch('t-pool-cooldown')).status, 200);
+  const cooled = await waitNeeds('t-pool-cooldown', 'approval');
+  assert.equal(cooled.steps[0].agent, 'codex-a');
+
+  fs.writeFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), '{}');
+  await mkTask('t-pool-error', { pipeline: 'poolplan', control: { exit: { plan: 7 } } });
+  assert.equal((await dispatch('t-pool-error')).status, 200);
+  const failed = await waitStatus('t-pool-error', 'failed');
+  assert.equal(failed.steps[0].agent, 'codex-b');
+  assert.equal(failed.steps[0].attempts, 1);
+  assert.ok(!(await api('/api/runs/t-pool-error/events')).json.some(e => e.phase === 'failover'));
 });
 
 test('(a) 各種非法 pipeline 都有明確錯誤訊息', () => {

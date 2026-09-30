@@ -27,14 +27,19 @@ const bad = (msg, status = 400) => new HttpError(status, msg);
 const ID_RE = /^[\w-]+$/;
 const NAME_RE = /^[\w.-]+$/;
 export const safeName = n => typeof n === 'string' && NAME_RE.test(n) && !/^\.+$/.test(n) && !n.includes('..');
-const loadAgents = () => JSON.parse(fs.readFileSync(agentsFile, 'utf8')).agents || [];
+function loadAgentConfig() {
+  const config = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
+  return { agents: Array.isArray(config.agents) ? config.agents : [], pools: config.pools && typeof config.pools === 'object' ? config.pools : {} };
+}
+const loadAgents = () => loadAgentConfig().agents;
+const loadPools = () => loadAgentConfig().pools;
 const now = () => Date.now();
 
 // ---------------------------------------------------------------- pipeline
 const WHEN_RE = /^([\w-]+)\.(failed|passed)$/;
 
 // 回傳 { ok, errors[] };agents 為 agents.json 的 agents 陣列
-export function validatePipeline(def, agents = []) {
+export function validatePipeline(def, agents = [], pools = {}) {
   const errors = [];
   const err = m => errors.push(m);
   if (!def || typeof def !== 'object' || Array.isArray(def)) return { ok: false, errors: ['pipeline 必須是 JSON 物件'] };
@@ -58,12 +63,28 @@ export function validatePipeline(def, agents = []) {
     if (type !== 'agent' && type !== 'command') err(`${L}: type 只能是 agent 或 command(目前: ${JSON.stringify(s.type)})`);
     if (type === 'command') {
       if (typeof s.command !== 'string' || !s.command.trim()) err(`${L}: command 類 step 必須有 command 字串`);
+      if (s.agent !== undefined || s.pool !== undefined) err(`${L}: command step 不可指定 agent 或 pool`);
     } else if (type === 'agent') {
-      if (typeof s.agent !== 'string' || !s.agent) err(`${L}: 缺少 agent`);
-      else if (s.agent !== '@task') {
+      const hasAgent = typeof s.agent === 'string' && s.agent.length > 0;
+      const hasPool = typeof s.pool === 'string' && s.pool.length > 0;
+      if (hasAgent === hasPool) err(`${L}: agent step 必須且只能指定 agent 或 pool`);
+      if (hasAgent && s.agent !== '@task') {
         const a = agentIds.get(s.agent);
         if (!a) err(`${L}: 未知 agent "${s.agent}"(agents.json 沒有這個 id;可用: ${[...agentIds.keys()].join(', ')} 或 @task)`);
         else if (!getAdapter(a.type)) err(`${L}: agent "${s.agent}" 的 type "${a.type}" 沒有對應 adapter`);
+      }
+      if (hasPool) {
+        const members = pools[s.pool];
+        if (!Array.isArray(members) || !members.length) err(`${L}: pool "${s.pool}" 不存在或是空的`);
+        else {
+          const seen = new Set();
+          for (const member of members) {
+            if (typeof member !== 'string' || !agentIds.has(member)) err(`${L}: pool "${s.pool}" 包含未知 agent "${member}"`);
+            else if (seen.has(member)) err(`${L}: pool "${s.pool}" 不可有重複 agent "${member}"`);
+            else if (!getAdapter(agentIds.get(member).type)) err(`${L}: pool "${s.pool}" 的 agent "${member}" 沒有 adapter`);
+            seen.add(member);
+          }
+        }
       }
       if (!MODES.includes(s.mode)) err(`${L}: mode 必須是 ${MODES.join('|')}(目前: ${JSON.stringify(s.mode)})`);
     }
@@ -96,13 +117,13 @@ export function validatePipeline(def, agents = []) {
   return { ok: errors.length === 0, errors };
 }
 
-export function loadPipeline(id, agents = loadAgents()) {
+export function loadPipeline(id, agents = loadAgents(), pools = loadPools()) {
   if (!ID_RE.test(id || '')) throw bad(`不合法的 pipeline id: ${id}`);
   const file = path.join(pipelinesDir, id + '.json');
   if (!fs.existsSync(file)) throw bad(`找不到 pipeline「${id}」(pipelines/${id}.json)`);
   let def;
   try { def = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw bad(`pipeline「${id}」JSON 解析失敗: ${e.message}`); }
-  const v = validatePipeline(def, agents);
+  const v = validatePipeline(def, agents, pools);
   if (def && def.id !== id) v.errors.push(`檔名是 ${id}.json 但 id 是 ${JSON.stringify(def.id)}`);
   if (v.errors.length) throw bad(`pipeline「${id}」驗證失敗: ` + v.errors.join(';'));
   return { ...def, maxRevisions: def.maxRevisions ?? 3 };
@@ -177,6 +198,46 @@ function writeFileAtomic(file, data) {
     throw lastErr;
   } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } throw e; }
 }
+const cooldownFile = path.join(runsDir, 'agent-cooldown.json');
+function loadCooldowns() {
+  try {
+    const value = JSON.parse(fs.readFileSync(cooldownFile, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const active = {};
+    let pruned = false;
+    for (const [agent, entry] of Object.entries(value)) {
+      if (entry && Number.isFinite(entry.until) && entry.until > now()) active[agent] = entry;
+      else pruned = true;
+    }
+    // Keep the on-disk runtime state small and make an expired cooldown
+    // immediately eligible again, including when the user retries this run.
+    if (pruned) saveCooldowns(active);
+    return active;
+  } catch { return {}; }
+}
+function saveCooldowns(cooldowns) {
+  try { fs.mkdirSync(runsDir, { recursive: true }); writeFileAtomic(cooldownFile, JSON.stringify(cooldowns, null, 2)); }
+  catch (e) { console.error(`[engine] agent cooldown 寫入失敗: ${e.message}`); }
+}
+function selectPoolAgent(def, st) {
+  const { agents, pools } = loadAgentConfig();
+  const cooldowns = loadCooldowns();
+  const members = pools[def.pool] || [];
+  // A failed member is excluded only while that quota cooldown is active.
+  // Otherwise a user retry after expiry could never select it again.
+  const tried = new Set((st.agentAttempts || [])
+    .filter(a => a && a.quota && Number.isFinite(a.until) && a.until > now())
+    .map(a => a.agent));
+  const unavailable = [];
+  for (const id of members) {
+    const agent = agents.find(a => a.id === id);
+    if (!agent || agent.enabled === false) { unavailable.push(`${id}: disabled`); continue; }
+    if (cooldowns[id]) { unavailable.push(`${id}: cooldown until ${new Date(cooldowns[id].until).toISOString()}`); continue; }
+    if (tried.has(id)) { unavailable.push(`${id}: quota exhausted`); continue; }
+    return { agent: id, unavailable };
+  }
+  return { agent: null, unavailable };
+}
 function saveRun(run, { strict = false } = {}) {
   try { writeFileAtomic(runPath(run.taskId, run.runId, 'run.json'), JSON.stringify(run, null, 2)); }
   catch (e) {
@@ -235,8 +296,8 @@ export function startRun(taskId) {
   const cur = getLatestRun(taskId);
   if (isActive(cur)) throw bad(`任務 ${taskId} 已有進行中的 run(${cur.runId},狀態 ${cur.status}),同一任務同時只能有一個 active run`, 409);
   const pid = resolvePipelineId(taskId);
-  const agents = loadAgents();
-  const def = loadPipeline(pid, agents);
+  const { agents, pools } = loadAgentConfig();
+  const def = loadPipeline(pid, agents, pools);
 
   let cwd = root;
   if (task.project) {
@@ -248,7 +309,7 @@ export function startRun(taskId) {
   const steps = def.steps.map(s => {
     const type = s.type || 'agent';
     let agent = null;
-    if (type === 'agent') {
+    if (type === 'agent' && !s.pool) {
       agent = s.agent === '@task' ? task.agent : s.agent;
       if (!agent) throw bad(`step「${s.id}」使用 @task,但任務沒有指派 agent`);
       const a = agents.find(x => x.id === agent);
@@ -256,7 +317,7 @@ export function startRun(taskId) {
       if (a.enabled === false) throw bad(`step「${s.id}」的 agent「${agent}」已停用(enabled:false)`);
       if (!getAdapter(a.type)) throw bad(`agent「${agent}」的 type「${a.type}」沒有對應 adapter`);
     }
-    return { id: s.id, type, agent, mode: s.mode || null, status: 'pending', attempts: 0, startedAt: null, endedAt: null, exitCode: null, pid: null };
+    return { id: s.id, type, agent, pool: s.pool || null, mode: s.mode || null, status: 'pending', attempts: 0, agentAttempts: [], startedAt: null, endedAt: null, exitCode: null, pid: null };
   });
   const runId = 'run-' + now();
   const run = {
@@ -352,6 +413,16 @@ async function driveLoop(ctx) {
         return;
       }
     }
+    if (st.type === 'agent' && def.pool && st.status !== 'running') {
+      const choice = selectPoolAgent(def, st);
+      if (!choice.agent) {
+        st.status = 'blocked'; st.endedAt = now(); saveRun(run);
+        toNeedsYou(ctx, 'no-agent-available', `pool「${def.pool}」沒有可用 agent: ${choice.unavailable.join('; ') || 'no eligible members'}`, def.id);
+        return;
+      }
+      st.agent = choice.agent;
+      saveRun(run);
+    }
     assertGatesCleared(run, idx);
 
     const resume = st.status === 'running';
@@ -370,6 +441,27 @@ async function driveLoop(ctx) {
       st.status = 'stopped'; st.endedAt = now(); ctx.stopping = false; saveRun(run);
       finishRun(ctx, 'cancelled', '使用者停止');
       return;
+    }
+    if (out.kind === 'quota') {
+      const cooldowns = loadCooldowns();
+      cooldowns[st.agent] = { until: out.until, reason: 'quota-exhausted', detectedAt: now(), detail: out.detail || null };
+      saveCooldowns(cooldowns);
+      st.agentAttempts = st.agentAttempts || [];
+      st.agentAttempts.push({ agent: st.agent, quota: true, until: out.until, at: now() });
+      const oldAgent = st.agent;
+      const choice = selectPoolAgent(def, st);
+      st.status = 'pending'; st.pid = null; st.endedAt = now();
+      if (!choice.agent) {
+        st.status = 'blocked';
+        saveRun(run);
+        engineEv(ctx, def.id, 'error', `agent ${oldAgent} 額度耗盡，pool 無可用成員`, { phase: 'failover', oldAgent, newAgent: null, cooldownUntil: out.until });
+        toNeedsYou(ctx, 'no-agent-available', `pool「${def.pool}」沒有可用 agent: ${choice.unavailable.join('; ')}`, def.id);
+        return;
+      }
+      st.agent = choice.agent;
+      saveRun(run);
+      engineEv(ctx, def.id, 'error', `agent ${oldAgent} 額度耗盡，改由 ${choice.agent} 重試`, { phase: 'failover', oldAgent, newAgent: choice.agent, cooldownUntil: out.until });
+      continue;
     }
     if (out.kind === 'failed') {
       st.status = 'failed'; st.endedAt = now(); saveRun(run);
@@ -526,6 +618,9 @@ function analyzeRaw(adapter, rawFile, from) {
   r.finalText = r.endText || r.deltaText || r.lastMessage || null; // 優先 end 事件的完整文字,其次串接的 delta,最後才是最後一則整段訊息
   return r;
 }
+function rawSince(rawFile, from) {
+  try { return fs.readFileSync(rawFile).subarray(from || 0).toString('utf8'); } catch { return ''; }
+}
 export function parseVerdict(text) {
   const first = String(text || '').split('\n').map(s => s.trim()).find(Boolean) || '';
   const m = first.replace(/^[*_`#>\s]+/, '').match(/^VERDICT:\s*(PASS|FAIL)\b/i);
@@ -580,7 +675,11 @@ async function runAgentStep(ctx, idx, resume) {
     st.blocked = an.needsHuman.slice(0, 3);
     return { kind: 'needs-you', reason: 'permission', message: `step「${def.id}」執行時遇到權限被拒/需要人工:${an.needsHuman[0]}` };
   }
-  if (code !== 0) return { kind: 'failed', message: `agent 結束碼 ${code === null ? '未知' : code}` };
+  if (code !== 0) {
+    const quota = def.pool && typeof adapter.detectQuotaExhaustion === 'function' && adapter.detectQuotaExhaustion(rawSince(rawFile, st.rawStart));
+    if (quota && quota.exhausted) return { kind: 'quota', until: quota.until || now() + 60 * 60 * 1000, detail: quota.detail };
+    return { kind: 'failed', message: `agent 結束碼 ${code === null ? '未知' : code}` };
+  }
   const out = { kind: 'done' };
   if (def.output) {
     const text = an.finalText;

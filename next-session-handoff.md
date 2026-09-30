@@ -18,6 +18,10 @@
 - codex-a(`~/.codex`,gpt-5.6-sol fast)額度用完(約 12:19 PM 重置);codex-b 已啟用。agy headless 仍會自動拒絕指令權限(需使用者決定是否在 `~/.gemini/antigravity-cli/settings.json` 加 `permissions.allow`;我試過 `command(*)` 可用,但分類器擋下自動開放,已還原設定)。
 - **下一步建議(等使用者確認)**:commander pipeline 模板、agent 池與額度耗盡自動換手、開工/收工按鈕、WP10 選模型。
 
+- **WP12(開工/收工按鈕)**、**WP11(Agent 池+額度耗盡自動換手)** 已由 codex-b 施工、Claude 複核(WP12 返工過一次);`npm test` 92/92。pool 設定在 `agents.json` 的 `pools`;冷卻檔 `board/runs/agent-cooldown.json`。
+- **額度可讀**:codex 的 session log 內有官方 `rate_limits`(5h/週已用%與重置時間),可寫成 WP13 顯示於看板並提前換手;Claude 自身額度讀不到。
+- **commander pipeline**(開工計畫→施工×2→審查→收工)方案已在對話提出,待使用者確認例行審查用無頭 Claude 或交給 codex/agy。
+
 ## 待使用者決定 / 已知風險
 1. D3:execute 權限強度與 command step 是否改 `{command,args}`+`shell:false`(審查 #8)。
 2. 審查 #10:prompt 信任邊界、核准計畫 hash 與 diff 範圍檢查(WP6 後做)。

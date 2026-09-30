@@ -29,7 +29,7 @@ let counts = {};
 try { counts = JSON.parse(fs.readFileSync(countsFile, 'utf8')); } catch { /* 第一次 */ }
 const n = (counts[mode] = (counts[mode] || 0) + 1);
 fs.writeFileSync(countsFile, JSON.stringify(counts));
-if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ flavor, flagMode, mode, cwd, prompt, n, args: isAgy ? args.slice(1) : args.slice(0, -1) }) + '\n');
+if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ flavor, flagMode, mode, cwd, prompt, n, codexHome: process.env.CODEX_HOME, args: isAgy ? args.slice(1) : args.slice(0, -1) }) + '\n');
 
 const out = o => process.stdout.write(JSON.stringify(o) + '\n');
 const init = () => (flavor === 'claude'
@@ -58,6 +58,10 @@ if (control.hang === mode) {
   fs.writeFileSync(path.join(cwd, 'hang.pid'), String(process.pid));
   setInterval(() => {}, 1000);
 } else {
+  if (flavor === 'codex' && (control.quota === mode || (control.quotaOnce === mode && n === 1))) {
+    out({ type: 'error', message: 'You’ve hit your usage limit. Try again at 11:59 PM.' });
+    process.exitCode = 1;
+  } else {
   let text;
   if (mode === 'plan') text = `# Plan\n- step A (plan #${n})\n- 預計動到 src/a.js`;
   else if (mode === 'review') {
@@ -71,4 +75,5 @@ if (control.hang === mode) {
   end(text, control.denyExecute && mode === 'execute');
   const code = control.exit && control.exit[mode];
   if (code) process.exitCode = code;
+  }
 }
