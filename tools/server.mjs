@@ -50,6 +50,85 @@ const listProjects = () => {
   return out;
 };
 const send = (res, code, data, type = 'application/json') => { res.writeHead(code, { 'content-type': type }); res.end(type === 'application/json' ? JSON.stringify(data) : data); };
+const terminalRun = run => ['completed', 'failed', 'cancelled'].includes(run?.status);
+const sseCursor = (url, req) => {
+  const raw = url.searchParams.has('since') ? url.searchParams.get('since') : req.headers['last-event-id'];
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
+};
+const sseWrite = (res, event, data, id) => {
+  if (res.destroyed || res.writableEnded) return false;
+  if (id !== undefined) res.write(`id: ${id}\n`);
+  res.write(`event: ${event}\n`);
+  // JSON.stringify 目前不會產生實體換行；仍逐行加 data:，避免未來 payload 格式改動破壞 SSE framing。
+  for (const line of JSON.stringify(data).split(/\r?\n/)) res.write(`data: ${line}\n`);
+  res.write('\n');
+  return true;
+};
+
+function streamRun(req, res, taskId, url) {
+  const first = engine.runDetail(taskId);
+  if (!first) return send(res, 404, { error: '這個任務沒有 run' });
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+  });
+  res.flushHeaders?.();
+
+  let cursor = sseCursor(url, req);
+  let lastDetail = '';
+  let pumping = false;
+  let closed = false;
+  let poll;
+  let heartbeat;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(poll);
+    clearInterval(heartbeat);
+    if (!res.writableEnded) res.end();
+  };
+  req.once('close', close);
+  res.once('close', close);
+
+  sseWrite(res, 'snapshot', { ...first, cursor });
+  const pump = () => {
+    if (closed || pumping) return;
+    pumping = true;
+    try {
+      // cursor = 已消費的 activity 數；SSE id 採一基底，剛好等於消費後的 cursor。
+      for (const activity of engine.readEvents(taskId, cursor)) {
+        cursor++;
+        if (!sseWrite(res, 'activity', activity, cursor)) return close();
+      }
+      const detail = engine.runDetail(taskId);
+      if (!detail) return close();
+      const current = JSON.stringify(detail);
+      if (current !== lastDetail) {
+        lastDetail = current;
+        if (!sseWrite(res, 'run', { ...detail, cursor })) return close();
+      }
+      // 最後一批 activity 一定先送完，terminal end 才關閉連線。
+      if (terminalRun(detail.run)) {
+        sseWrite(res, 'end', { status: detail.run.status, runId: detail.run.runId, cursor });
+        return close();
+      }
+    } catch (e) {
+      sseWrite(res, 'stream-error', { error: String(e.message || e), cursor });
+      close();
+    } finally { pumping = false; }
+  };
+  pump();
+  if (!closed) {
+    poll = setInterval(pump, 250);
+    heartbeat = setInterval(() => {
+      if (!closed && !res.destroyed && !res.writableEnded) res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, 15000);
+  }
+}
 const readBody = req => new Promise((ok, no) => {
   let s = ''; req.on('data', c => (s += c)); req.on('error', no);
   req.on('end', () => { try { const o = JSON.parse(s || '{}'); ok(o && typeof o === 'object' && !Array.isArray(o) ? o : {}); } catch { no(Object.assign(new Error('請求 body 不是合法 JSON'), { status: 400 })); } });
@@ -158,6 +237,7 @@ http.createServer(async (req, res) => {
     const mRun = url.pathname.match(/^\/api\/runs\/([\w-]+)(?:\/([a-z]+)(?:\/([^/]+))?)?$/);
     if (mRun) {
       const [, taskId, sub, name] = mRun;
+      if (sub === 'stream' && !name && req.method === 'GET') return streamRun(req, res, taskId, url);
       if (!sub && req.method === 'GET') {
         const d = engine.runDetail(taskId);
         return d ? send(res, 200, d) : send(res, 404, { error: '這個任務沒有 run' });
