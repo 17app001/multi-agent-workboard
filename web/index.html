@@ -83,7 +83,7 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
 .codex-quota{margin-top:6px;display:flex;flex-direction:column;align-items:stretch;gap:4px}.codex-quota .ptag{align-self:flex-start;white-space:nowrap}.quota-stale{white-space:nowrap}
 .quota-line{display:grid;grid-template-columns:1fr;gap:5px;align-items:center;width:100%;font-size:11px;color:var(--mut)}
 .quota-track{height:5px;background:var(--line);border-radius:99px;overflow:hidden}.quota-track i{display:block;height:100%;background:var(--accent2);border-radius:inherit}
-.quota-warn{color:#b7791f}.quota-warn .quota-track i{background:#d69e2e}.quota-danger{color:var(--danger)}.quota-danger .quota-track i{background:var(--danger)}.quota-stale{color:#b7791f}
+label.inline{display:flex;gap:6px;align-items:flex-start;font-size:12px;color:var(--mut)}label.inline input{width:auto;margin-top:2px}.quota-warn{color:#b7791f}.quota-warn .quota-track i{background:#d69e2e}.quota-danger{color:var(--danger)}.quota-danger .quota-track i{background:var(--danger)}.quota-stale{color:#b7791f}
 @keyframes breathe{0%{opacity:.4;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}100%{opacity:.4;transform:scale(.92)}}
 .lamp-running{display:inline-block;animation:breathe 1.6s ease-in-out infinite}
 .usage-summary-bar{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-bottom:14px;font-size:13px}
@@ -217,6 +217,7 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
       <label>Agent<select id=fAgent></select></label>
       <label>Model<select id=fModel></select></label>
       <label>專案<select id=fProject></select></label>
+      <label>流程<select id=fPipeline></select></label>
       <label>目標(goal)<textarea id=fGoal rows=2 placeholder="完成此任務的最終期望產出"></textarea></label>
       <label>驗收條件(acceptance,用 ; 分隔)<textarea id=fAcc rows=2 placeholder="項目 1; 項目 2"></textarea></label>
       <label>會動到的檔案(逗號分隔,可留空)<input id=fFiles placeholder="tools/usage.mjs,web/index.html"></label>
@@ -233,6 +234,8 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
       <label>id(英數、_、-)<input id=pId placeholder="例如: my-project"></label>
       <label>名稱<input id=pName placeholder="例如: 我的專案"></label>
       <label>路徑(存在的絕對路徑)<input id=pPath placeholder="D:/MyProject/xxx"></label>
+      <label>測試指令(選填;流程裡的測試步驟會用它,沒填且有 npm test 就跑 npm test,否則略過)<input id=pTest placeholder="例如: npm test 或 pytest"></label>
+      <label class=inline><input type=checkbox id=pWt> 用 git worktree 隔離(每個任務在獨立分支施工,完成後由你合併或丟棄;專案必須是 git repo)</label>
       <div class=row><button id=projSave>新增專案</button></div>
     </div>
   </div>
@@ -488,19 +491,24 @@ async function refreshTaskModels(){const agent=$('#fAgent').value;if(!agent){$('
 $('#fAgent').onchange=refreshTaskModels;
 $('#add').onclick=()=>{['#fTitle','#fGoal','#fAcc','#fFiles'].forEach(s=>$(s).value='');
  renderProjectOptions();if(selectedProject)$('#fProject').value=selectedProject;
- $('#fAgent').innerHTML=agentOptionsHtml(cfg.agents);refreshTaskModels();
+ $('#fAgent').innerHTML=agentOptionsHtml(cfg.agents);refreshTaskModels();paintPipelineOptions();
  $('#taskModal').hidden=false;$('#fTitle').focus()};
 $('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
+let pipelinesData=null;
+async function paintPipelineOptions(){
+ try{if(!pipelinesData)pipelinesData=await api('pipelines')}catch{pipelinesData=[]}
+ const opts=(Array.isArray(pipelinesData)?pipelinesData:[]).filter(p=>p.valid&&p.id!=='decompose');
+ $('#fPipeline').innerHTML='<option value="">(依專案預設;沒有就用 single)</option>'+opts.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.id)+' — '+esc(String(p.description||'').slice(0,48))+'</option>').join('')}
 $('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){showToast('請填寫任務標題','error');$('#fTitle').focus();return}
- await post({title,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true;showToast('任務已建立','info')};
+ await post({title,pipeline:$('#fPipeline').value,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true;showToast('任務已建立','info')};
 
 function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(projectRowHtml).join(''):'<div class=mut>尚無專案</div>'}
 $('#projBtn').onclick=()=>{paintProjects();$('#projModal').hidden=false};
 $('#projClose').onclick=()=>{$('#projModal').hidden=true};
 $('#projSave').onclick=async()=>{const id=$('#pId').value.trim(),name=$('#pName').value.trim(),path=$('#pPath').value.trim();
  if(!id||!path){showToast('請填寫專案 ID 與路徑','error');return}
- const r=await api('projects',{method:'POST',body:JSON.stringify({id,name,path})});
- if(r.error){showToast(r.error,'error');return}showToast('專案建立成功','info');['#pId','#pName','#pPath'].forEach(s=>$(s).value='');await load();paintProjects()};
+ const r=await api('projects',{method:'POST',body:JSON.stringify({id,name,path,testCommand:$('#pTest').value.trim(),worktrees:$('#pWt').checked})});
+ if(r.error){showToast(r.error,'error');return}showToast('專案建立成功','info');['#pId','#pName','#pPath','#pTest'].forEach(s=>$(s).value='');$('#pWt').checked=false;await load();paintProjects()};
 
 function collectDraftFromDom(){
  const rows=$$('#decomposeDraftArea [data-draft-row]');

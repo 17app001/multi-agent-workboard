@@ -790,8 +790,32 @@ async function runAgentStep(ctx, idx, resume) {
 }
 
 // ---------------------------------------------------------------- command step(測試等)
+function resolveTestCommand(def, run) {
+  if (def.command !== '{{test}}') return { command: def.command };
+  const project = run.projectId ? getProject(run.projectId) : null;
+  const custom = project && typeof project.testCommand === 'string' ? project.testCommand.trim() : '';
+  if (custom) return { command: custom };
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(run.cwd, 'package.json'), 'utf8'));
+    if (pkg && pkg.scripts && pkg.scripts.test) return { command: 'npm test' };
+  } catch {}
+  return { skip: true };
+}
+
 async function runCommandStep(ctx, idx, resume) {
-  const run = ctx.run, def = run.pipelineDef.steps[idx], st = run.steps[idx];
+  const run = ctx.run, def0 = run.pipelineDef.steps[idx], st = run.steps[idx];
+  // 指令可用 {{test}} 佔位:取專案的 testCommand;沒設定且專案有 npm test 才用 npm test;都沒有就略過(不同語言的專案不該硬跑 npm test)
+  const resolved = resolveTestCommand(def0, run);
+  if (resolved.skip) {
+    if (!resume) {
+      const f0 = runPath(run.taskId, run.runId, 'artifacts', def0.output || def0.id + '.txt');
+      fs.writeFileSync(f0, '(這個專案沒有設定測試指令,已略過測試步驟。可在專案設定填 testCommand)\n');
+      st.attempts = (st.attempts || 0) + 1; st.startedAt = now(); st.endedAt = now(); st.exitCode = 0; saveRun(run);
+      engineEv(ctx, def0.id, 'message', '沒有設定測試指令,略過測試步驟', { phase: 'test-skipped' });
+    }
+    return { kind: 'done' };
+  }
+  const def = { ...def0, command: resolved.command };
   const file = runPath(run.taskId, run.runId, 'artifacts', def.output || def.id + '.txt');
   let child = null;
   if (!resume) {

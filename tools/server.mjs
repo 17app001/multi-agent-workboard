@@ -322,7 +322,7 @@ http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (!/^[\w-]+$/.test(b.id || '')) return send(res, 400, { error: 'bad id' });
       if (typeof b.path !== 'string' || !projectValid({ path: b.path })) return send(res, 400, { error: 'path 必須是存在的絕對路徑資料夾' });
-      const p = { id: b.id, name: String(b.name || b.id), path: b.path, defaultBranch: String(b.defaultBranch || 'main'), defaultPipeline: String(b.defaultPipeline || 'standard'), worktrees: !!b.worktrees };
+      const p = { id: b.id, name: String(b.name || b.id), path: b.path, defaultBranch: String(b.defaultBranch || 'main'), testCommand: oneLine(b.testCommand || '').slice(0, 200), defaultPipeline: String(b.defaultPipeline || 'standard'), worktrees: !!b.worktrees };
       fs.mkdirSync(projectsDir, { recursive: true });
       fs.writeFileSync(path.join(projectsDir, p.id + '.json'), JSON.stringify(p, null, 2));
       return send(res, 200, { ...p, valid: true });

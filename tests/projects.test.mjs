@@ -40,6 +40,7 @@ before(async () => {
   const price = { input: 0, cached: 0, output: 0 };
   fs.writeFileSync(path.join(sandbox, 'agents.json'), JSON.stringify({
     columns: ['backlog', 'todo', 'doing', 'review', 'done'],
+    pools: { codex: ['codex-a'] },
     agents: [
       { id: 'claude', type: 'claude', label: 'Fake Claude', home: path.join(sandbox, 'h1'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
       { id: 'codex-a', type: 'codex', label: 'Fake Codex', home: path.join(sandbox, 'h2'), cmd: process.execPath, cmdPrefix: [fakeCli], price },

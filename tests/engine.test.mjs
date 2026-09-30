@@ -978,3 +978,37 @@ test('pool selection proactively skips fresh Codex quota but allows stale observ
   assert.equal((await dispatch('t-proactive-stale')).status, 200);
   assert.equal((await waitNeeds('t-proactive-stale', 'approval')).steps[0].agent, 'codex-b');
 });
+
+// ---- {{test}} 佔位:測試指令隨專案而不同(不同語言的專案不該硬跑 npm test) ----
+async function runTestVarPipeline(id, { testCommand, removePackageJson } = {}) {
+  fs.writeFileSync(path.join(sandbox, 'pipelines', 'testvar.json'), JSON.stringify({ id: 'testvar', steps: [
+    { id: 'plan', agent: 'claude', mode: 'plan', output: 'plan.md', gate: 'human' },
+    { id: 'test', type: 'command', command: '{{test}}', output: 'test.txt' },
+  ] }));
+  const dir = mkProject(id, {});
+  if (removePackageJson) fs.rmSync(path.join(dir, 'package.json'));
+  const pj = 'proj-' + id;
+  assert.equal((await post('/api/projects', { id: pj, name: pj, path: dir, ...(testCommand ? { testCommand } : {}) })).status, 200);
+  assert.equal((await post('/api/tasks', { id, title: id, agent: 'claude', status: 'todo', project: pj, pipeline: 'testvar', goal: 'g', acceptance: 'a' })).status, 200);
+  assert.equal((await dispatch(id)).status, 200);
+  await waitNeeds(id, 'approval');
+  assert.equal((await post(`/api/runs/${id}/approve`)).status, 200);
+  const run = await waitStatus(id, 'completed');
+  return (await api(`/api/runs/${id}/artifacts/test.txt`)).text;
+}
+
+test('{{test}} 用專案的 testCommand', async () => {
+  const out = await runTestVarPipeline('t-testvar-custom', { testCommand: 'node -e "console.log(\'CUSTOM-TEST-OK\')"' });
+  assert.match(out, /CUSTOM-TEST-OK/);
+});
+
+test('{{test}} 沒設定 testCommand 但專案有 npm test 時用 npm test', async () => {
+  const out = await runTestVarPipeline('t-testvar-npm');
+  assert.match(out, /\$ npm test/);
+  assert.match(out, /\[exit 0\]/);
+});
+
+test('{{test}} 沒有 testCommand 也沒有 package.json 時略過(不失敗)', async () => {
+  const out = await runTestVarPipeline('t-testvar-skip', { removePackageJson: true });
+  assert.match(out, /略過/);
+});

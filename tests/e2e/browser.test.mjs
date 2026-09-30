@@ -322,3 +322,22 @@ test('(h) 舊式 review 狀態(沒有進行中的 run)不可標成「待核准�
   });
   assert.equal(fakeApproval, false, '沒有等核准的計畫時,不可顯示「待核准計畫」');
 });
+
+test('(i) 新任務表單可選「流程」(pipeline),並存進任務', { skip: skipMsg }, async () => {
+  await page.navigate(baseUrl);
+  await page.waitFor('#add');
+  await page.click('#add');
+  await page.waitFor('#taskModal:not([hidden])');
+  await page.waitFor(() => document.querySelectorAll('#fPipeline option').length >= 3, { timeout: 5000 });
+  const opts = await page.evaluate(() => [...document.querySelectorAll('#fPipeline option')].map(o => o.value));
+  assert.ok(opts.includes('standard') && opts.includes('single'), `流程選項應含 standard 與 single,實際: ${opts}`);
+  assert.ok(!opts.includes('decompose'), 'decompose 是給需求拆解用的內部流程,不該出現在一般任務的流程選單');
+  await page.type('#fTitle', '選流程的任務');
+  await page.selectOption('#fPipeline', 'standard');
+  await page.click('#taskSave');
+  await page.waitFor('#taskModal[hidden]');
+  const tasks = await (await fetch(`${baseUrl}/api/tasks`)).json();
+  const t = tasks.find(x => x.title === '選流程的任務');
+  assert.ok(t, '任務應已建立');
+  assert.equal(t.pipeline, 'standard');
+});
