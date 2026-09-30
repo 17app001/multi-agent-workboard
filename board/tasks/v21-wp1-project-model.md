@@ -1,6 +1,6 @@
 ---
 title: WP1 Project 模型與任務欄位
-status: review
+status: done
 agent: claude
 priority: p0
 files: tools/server.mjs,tools/dispatch.mjs,web/index.html,board/projects

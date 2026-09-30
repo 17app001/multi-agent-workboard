@@ -1,6 +1,6 @@
 ---
 title: WP11 Agent 池與額度耗盡自動換手
-status: review
+status: done
 agent: codex-b
 priority: p1
 files: tools/engine.mjs,tools/adapters,agents.json,tests/engine.test.mjs

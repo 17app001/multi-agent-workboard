@@ -1,6 +1,6 @@
 ---
 title: WP3 Run 引擎、Pipeline 與計畫核准關卡
-status: review
+status: done
 agent: claude
 priority: p0
 files: tools/engine.mjs,tools/dispatch.mjs,tools/server.mjs,pipelines

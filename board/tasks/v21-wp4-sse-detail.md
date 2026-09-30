@@ -1,6 +1,6 @@
 ---
 title: WP4 SSE 事件流與 Task Detail 頁(含 UI 核准按鈕)
-status: review
+status: done
 agent: codex-b
 priority: p1
 files: tools/server.mjs,web/index.html,web/render.js,web/detail.js,tests/web.test.mjs,tests/server.test.mjs

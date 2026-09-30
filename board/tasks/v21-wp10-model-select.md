@@ -1,6 +1,6 @@
 ---
 title: WP10 每個 agent 可選模型(任務/agent 層級)
-status: review
+status: done
 agent: codex-b
 priority: p1
 files: tools/adapters,agents.json,tools/server.mjs,web/index.html,tests

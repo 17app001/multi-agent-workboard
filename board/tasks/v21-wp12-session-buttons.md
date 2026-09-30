@@ -1,6 +1,6 @@
 ---
 title: WP12 開工/收工按鈕(自動簡報與收工紀錄)
-status: review
+status: done
 agent: codex-b
 priority: p1
 files: tools/session.mjs,tools/server.mjs,web/index.html,web/session.js,tests/session.test.mjs

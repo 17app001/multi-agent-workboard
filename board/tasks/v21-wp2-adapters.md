@@ -1,6 +1,6 @@
 ---
 title: WP2 Adapter 層與事件標準化
-status: review
+status: done
 agent: claude
 priority: p0
 files: tools/adapters,tests
