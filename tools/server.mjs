@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { collectUsage, usageInRange, usageForRun, collectRunAnalytics } from './usage.mjs';
 import { readCodexQuota } from './quota.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
@@ -261,6 +262,41 @@ export function collectRecentActivities(limit = 40) {
 }
 
 engine.init(); // 接手上次 server 留下的 running run(needs-you 的 run 不需要行程,呼叫 API 時才載入)
+// 用量/分析/活動要掃描大量 log,真實資料下要數秒且是同步運算(會卡住整個 server)。
+// 用簡單的 TTL 快取,避免前端每次輪詢都重算。
+const memoStore = new Map();
+function memo(key, ttlMs, fn) {
+  const hit = memoStore.get(key);
+  const t = Date.now();
+  if (hit && t - hit.t < ttlMs) return hit.v;
+  const v = fn();
+  memoStore.set(key, { t, v });
+  return v;
+}
+
+// stale-while-revalidate:有舊值就立刻回傳(過期則在背景用 worker 重算);完全沒有值才等第一次結果。
+// 重運算放 worker thread,主執行緒(任務/核准等請求)不會被卡住。
+const heavyStore = new Map();
+function runHeavyWorker(kind) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./heavy-worker.mjs', import.meta.url), { workerData: { kind, agents: cfg().agents, runsDir } });
+    w.once('message', m => (m.ok ? resolve(m.value) : reject(new Error(m.error))));
+    w.once('error', reject);
+  });
+}
+async function heavy(kind, ttlMs) {
+  let e = heavyStore.get(kind);
+  if (!e) { e = { v: undefined, t: 0, p: null }; heavyStore.set(kind, e); }
+  const refresh = () => {
+    if (e.p) return e.p;
+    e.p = runHeavyWorker(kind).then(v => { e.v = v; e.t = Date.now(); }).catch(err => { console.error('[heavy]', kind, err.message); }).finally(() => { e.p = null; });
+    return e.p;
+  };
+  if (e.v === undefined || process.env.WORKBOARD_NO_CACHE === '1') await refresh(); // 測試環境設 WORKBOARD_NO_CACHE=1 要求每次取最新值
+  else if (Date.now() - e.t > ttlMs) refresh();
+  return e.v === undefined ? (kind === 'usage' ? [] : {}) : e.v;
+}
+
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -331,15 +367,15 @@ http.createServer(async (req, res) => {
     }
 
 
-    if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents, runsDir));
-    if (url.pathname === '/api/analytics' && req.method === 'GET') return send(res, 200, collectRunAnalytics(runsDir, cfg().agents));
+    if (url.pathname === '/api/usage') return send(res, 200, await heavy('usage', 30_000));
+    if (url.pathname === '/api/analytics' && req.method === 'GET') return send(res, 200, await heavy('analytics', 60_000));
     if (url.pathname === '/api/quota' && req.method === 'GET') {
       const agents = Array.isArray(cfg().agents) ? cfg().agents : [];
       return send(res, 200, agents.filter(a => a?.type === 'codex' && a.enabled !== false)
         .map(a => ({ id: a.id, quota: readCodexQuota(a.home) })));
     }
     if (url.pathname === '/api/activity' && req.method === 'GET') {
-      const events = collectRecentActivities(40);
+      const events = memo('activity', 4_000, () => collectRecentActivities(40));
       const activeRuns = [...listActiveRuns(), ...engine.listActiveRuns()];
       const seen = new Set();
       const activeAgents = [];
@@ -561,4 +597,8 @@ http.createServer(async (req, res) => {
     }
     send(res, 404, { error: 'not found' });
   } catch (e) { send(res, e.status || 500, { error: e.status ? e.message : String(e) }); }
-}).listen(PORT, '127.0.0.1', () => console.log('workboard on http://localhost:' + PORT));
+}).listen(PORT, '127.0.0.1', () => {
+  console.log('workboard on http://localhost:' + PORT);
+  // 啟動後在背景預熱重運算,使用者打開首頁時通常已有快取
+  heavy('usage', 30_000).catch(() => {}); heavy('analytics', 60_000).catch(() => {});
+});

@@ -80,8 +80,8 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
 .agent-lamp-wrap{margin-left:auto;font-size:12px;display:inline-flex;align-items:center;gap:4px}
 .agent-status-text{font-size:11px}
 .agent-activity{font-size:12px;margin-top:2px}
-.codex-quota{margin-top:4px;display:flex;align-items:center;gap:6px}
-.quota-line{display:grid;grid-template-columns:max-content minmax(54px,1fr);gap:5px;align-items:center;width:100%;font-size:11px;color:var(--mut)}
+.codex-quota{margin-top:6px;display:flex;flex-direction:column;align-items:stretch;gap:4px}.codex-quota .ptag{align-self:flex-start;white-space:nowrap}.quota-stale{white-space:nowrap}
+.quota-line{display:grid;grid-template-columns:1fr;gap:5px;align-items:center;width:100%;font-size:11px;color:var(--mut)}
 .quota-track{height:5px;background:var(--line);border-radius:99px;overflow:hidden}.quota-track i{display:block;height:100%;background:var(--accent2);border-radius:inherit}
 .quota-warn{color:#b7791f}.quota-warn .quota-track i{background:#d69e2e}.quota-danger{color:var(--danger)}.quota-danger .quota-track i{background:var(--danger)}.quota-stale{color:#b7791f}
 @keyframes breathe{0%{opacity:.4;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}100%{opacity:.4;transform:scale(.92)}}
@@ -100,7 +100,7 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
 .pinned-items{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .pinned-item{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
 .pinned-item-info{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.activity-timeline{display:flex;flex-direction:column;gap:8px;max-height:72vh;overflow-y:auto}
+.activity-item *{overflow-wrap:anywhere}.activity-body{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;color:var(--mut);max-height:3.2em}.activity-timeline{overflow-x:hidden;display:flex;flex-direction:column;gap:8px;max-height:72vh;overflow-y:auto}
 .activity-item{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;transition:border-color .15s}
 .activity-item:hover{border-color:var(--accent)}
 .activity-meta{display:flex;align-items:center;gap:6px;font-size:11px;flex-wrap:wrap;margin-bottom:3px}
@@ -352,18 +352,31 @@ function switchView(view){
  else if(view==='analytics')renderAnalytics();
 }
 
-async function load(){
+// 首頁資料分兩層載入:看板/專案/設定很快,先載入並立即渲染;用量、活動、額度、分析在真實資料量大時很慢,
+// 各自獨立載入、到了再補渲染,不阻塞首頁(曾因 Promise.all 綁在一起,首頁空白數秒)。
+async function loadCore(){
  const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
  const prevRun={};Object.keys(runStatus).forEach(id=>{prevRun[id]=runStatus[id]?.status});
  cfg??=await api('config');
- const [p,t,u,act,q,a]=await Promise.all([api('projects'),api('tasks'),api('usage'),api('activity').catch(()=>null),api('quota').catch(()=>[]),api('analytics').catch(()=>({}))]);
- projects=p;tasks=t;usageData=u;quotaData=Array.isArray(q)?q:[];analyticsData=a||{};
- if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}
+ const [p,t]=await Promise.all([api('projects'),api('tasks')]);
+ projects=p;tasks=t;
  if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
  render();
  checkTaskTransitions(prevStatus);
  checkRunTransitions(prevRun);
 }
+async function loadHeavy(){
+ const prevRun={};Object.keys(runStatus).forEach(id=>{prevRun[id]=runStatus[id]?.status});
+ const jobs=[
+  api('activity').then(act=>{if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}}),
+  api('quota').then(q=>{quotaData=Array.isArray(q)?q:[]}),
+  api('usage').then(u=>{usageData=u}),
+  api('analytics').then(a=>{analyticsData=a||{}}),
+ ].map(j=>j.catch(()=>null).then(()=>{try{render()}catch(e){console.error(e)}}));
+ await Promise.all(jobs);
+ checkRunTransitions(prevRun);
+}
+async function load(){await Promise.all([loadCore(),loadHeavy()])}
 
 function stopDetailStream(){detailSource?.close();detailSource=null;if(detailPoll)clearInterval(detailPoll);detailPoll=null}
 function paintDetail(){if(!openDetailId)return;const task=tasks.find(t=>t.id===openDetailId)||{id:openDetailId};$('#detailPage').innerHTML=detailHtml(detailData,task,detailEvents,detailArtifacts,detailRaw)}
@@ -617,5 +630,5 @@ $('#decomposeBackBtn').onclick=()=>{if(decomposePollInterval)clearInterval(decom
 $('#logClose').onclick=closeLog;
 $('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};
 updateNotifyBtn();
-load();setInterval(load,15000);setInterval(refreshActive,3000);
+loadCore();loadHeavy();setInterval(loadCore,8000);setInterval(loadHeavy,30000);setInterval(refreshActive,3000);
 </script></html>

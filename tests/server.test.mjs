@@ -35,7 +35,7 @@ before(async () => {
     '---\r\ntitle: CRLF 任務\r\nstatus: todo\r\nagent: claude\r\npriority: p0\r\nupdated: 2026-01-01\r\n---\r\n\r\n## Log\r\n');
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, [path.join(sandbox, 'tools/server.mjs'), String(port)], { stdio: ['ignore', 'pipe', 'inherit'] });
+  proc = spawn(process.execPath, [path.join(sandbox, 'tools/server.mjs'), String(port)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, WORKBOARD_NO_CACHE: '1' } });
   await new Promise((ok, bad) => {
     proc.stdout.on('data', d => String(d).includes('workboard on') && ok());
     proc.on('exit', c => bad(new Error('server exited early: ' + c)));

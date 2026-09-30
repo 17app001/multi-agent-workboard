@@ -287,3 +287,38 @@ test('(f) XSS 防護：任務標題含 <img onerror> 不會執行', { skip: skip
   const hasInjectedImg = await page.evaluate(() => Boolean(document.querySelector('img[onerror]')));
   assert.equal(hasInjectedImg, false, 'DOM 中不應存在未跳脫之 img[onerror]');
 });
+
+// ---- 回歸測試:真實資料量大時才會出現的問題(乾淨沙箱不易重現,所以在瀏覽器端刻意製造) ----
+
+test('(g) 慢速/卡住的用量、活動、額度、分析 API 不可阻塞首頁顯示任務', { skip: skipMsg }, async () => {
+  // 曾因 load() 用 Promise.all 綁住所有 API,真實資料下 /api/analytics 要數秒,首頁空白。
+  await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'task-slow-heavy', title: '慢速API回歸任務', agent: 'codex-a', status: 'todo' }),
+  });
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    const __f = window.fetch.bind(window);
+    window.fetch = (u, o) => /\/api\/(usage|activity|quota|analytics)/.test(String(u)) ? new Promise(() => {}) : __f(u, o);
+  ` });
+  await page.navigate(baseUrl);
+  // 重運算的 API 永遠不回應,任務仍必須在數秒內顯示(queued 分頁計數 ≥ 1)
+  await page.waitFor(() => Number(document.querySelector('#countQueued')?.textContent) >= 1, { timeout: 5000 });
+  const n = await page.evaluate(() => Number(document.querySelector('#countQueued').textContent));
+  assert.ok(n >= 1);
+});
+
+test('(h) 舊式 review 狀態(沒有進行中的 run)不可標成「待核准計畫」', { skip: skipMsg }, async () => {
+  await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'task-legacy-review', title: '舊式待驗收任務', agent: 'codex-a', status: 'review' }),
+  });
+  await page.navigate(baseUrl);
+  await page.waitFor(() => document.body.textContent.includes('舊式待驗收任務'), { timeout: 8000 });
+  const banner = await page.evaluate(() => (document.querySelector('.pinned-needs-you') || document.body).textContent);
+  assert.ok(banner.includes('待你驗收'), '舊式 review 應標為「已完成・待你驗收」');
+  const fakeApproval = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('.pinned-item')].filter(x => x.textContent.includes('舊式待驗收任務'));
+    return items.some(x => x.textContent.includes('待核准計畫'));
+  });
+  assert.equal(fakeApproval, false, '沒有等核准的計畫時,不可顯示「待核准計畫」');
+});

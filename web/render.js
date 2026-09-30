@@ -65,7 +65,7 @@ function analyticsHtml(data = {}) {
   const max = Math.max(1, ...agents.map(a => num(a.total)));
   const distribution = agents.length ? agents.map(a => `<div class=analytics-row><span>${esc(a.id)}</span><i style="width:${esc((num(a.total) / max * 100).toFixed(1))}%"></i><b>${esc(fmt(num(a.total)))}</b></div>`).join('') : '<p class=mut>無資料</p>';
   const top = Array.isArray(data.topTasks) && data.topTasks.length ? data.topTasks.map(t => `<li><span>${esc(t.taskId)}</span><b>${esc(fmt(num(t.total)))} tokens · $${esc(num(t.costEstimate).toFixed(4))}</b></li>`).join('') : '<li class=mut>無資料</li>';
-  return `<section class=analytics><div class=analytics-summary>${summary('今日', data.today)}${summary('近 7 天', data.week)}${summary('本月', data.month)}</div><p class=mut>所有費用均為 API 等值估算，非實際扣費。</p><div class=analytics-grid><section class=card><h3>依 Agent 分布（本月）</h3>${distribution}</section><section class=card><h3>用量最高前五任務</h3><ol class=analytics-top>${top}</ol></section></div></section>`;
+  return `<section class=analytics><div class=analytics-summary>${summary('今日(看板派工)', data.today)}${summary('近 7 天(看板派工)', data.week)}${summary('本月(看板派工)', data.month)}</div><p class=mut>以上統計只計「透過看板派工的任務」;首頁的「今日用量」則是本機各 CLI 的全部使用量(含你手動使用)。所有費用均為 API 等值估算，非實際扣費。</p><div class=analytics-grid><section class=card><h3>依 Agent 分布（本月）</h3>${distribution}</section><section class=card><h3>用量最高前五任務</h3><ol class=analytics-top>${top}</ol></section></div></section>`;
 }
 
 function badgeHtml(t, runStatus) {
@@ -75,7 +75,7 @@ function badgeHtml(t, runStatus) {
 }
 
 function projLineHtml(t, projects) {
-  if (!t.project) return '<div class=warn>⚠ 未綁定專案:會在看板 repo 內執行</div>';
+  if (!t.project) return (t.status === 'done' || t.state === 'completed') ? '' : '<div class=warn>⚠ 未綁定專案:會在看板 repo 內執行</div>';
   const p = projects.find(x => x.id === t.project);
   if (!p) return `<div class=warn>⚠ 專案「${esc(t.project)}」不存在,無法派工</div>`;
   const warn = p.valid ? '' : `<span class=warn>⚠ ${p.error ? esc(p.error) : '路徑失效,無法派工'}</span>`;
@@ -225,8 +225,9 @@ function needsYouPinnedHtml(needsYouTasks = [], runStatus = {}, isExpanded = tru
   }
   const items = needsYouTasks.map(t => {
     const r = runStatus[t.id];
-    const reason = r?.needsYou?.reason || 'approval';
-    const reasonText = reason === 'approval' ? '待核准計畫' : (reason === 'revision-limit' ? '回修達上限' : (reason === 'permission' ? '需要權限' : (reason === 'timeout' ? '執行逾時' : '需要指示')));
+    // 沒有進行中的 run 卻是 review 狀態 = 舊式「做完等人驗收」,不是在等核准計畫,不可標成「待核准計畫」
+    const reason = r?.needsYou?.reason || (r && r.status === 'needs-you' ? 'approval' : 'review');
+    const reasonText = reason === 'review' ? '已完成・待你驗收' : reason === 'approval' ? '待核准計畫' : (reason === 'revision-limit' ? '回修達上限' : (reason === 'permission' ? '需要權限' : (reason === 'timeout' ? '執行逾時' : '需要指示')));
     return `<div class="pinned-item row"><div class=pinned-item-info><span class="badge b-failed">${esc(reasonText)}</span><b>${esc(t.title || t.id)}</b><span class=mut>${esc(t.agent ? 'agent: ' + t.agent : '')}</span></div><div class=row><button class=primary data-detail="${esc(t.id)}">👉 立即審查 / 處理</button></div></div>`;
   }).join('');
   return `<div class="pinned-needs-you card">${header}<div class=pinned-items>${items}</div></div>`;
@@ -241,8 +242,11 @@ function activityListHtml(events = []) {
     if (e.ts) {
       try { timeStr = new Date(e.ts).toLocaleTimeString(); } catch {}
     }
-    const textStr = typeof e.text === 'string' ? e.text : JSON.stringify(e.text ?? '');
-    return `<div class=activity-item data-detail="${esc(e.taskId)}"><div class=activity-meta><span class=activity-time>${esc(timeStr)}</span><b class=activity-task title="${esc(e.taskTitle || e.taskId)}">${esc(e.taskTitle || e.taskId)}</b>${e.step ? `<span class=ptag>${esc(e.step)}</span>` : ''}<span class="activity-kind mut">${esc(e.kind || '')}</span></div><div class=activity-desc>${esc(textStr)}</div></div>`;
+    let textStr = typeof e.text === 'string' ? e.text : JSON.stringify(e.text ?? '');
+    // 指令事件常是很長的 PowerShell 包裝字串:去掉包裝前綴、壓縮空白、截斷,避免洗版
+    textStr = textStr.replace(/^"?[^"]*powershell(?:\.exe)?"?\s+-Command\s+/i, '').replace(/\\{2,}/g, '\\').replace(/\s+/g, ' ').trim();
+    if (textStr.length > 140) textStr = textStr.slice(0, 140) + '…';
+    return `<div class=activity-item data-detail="${esc(e.taskId)}"><div class=activity-meta><span class=activity-time>${esc(timeStr)}</span><b class=activity-task title="${esc(e.taskTitle || e.taskId)}">${esc(e.taskTitle || e.taskId)}</b>${e.step ? `<span class=ptag>${esc(e.step)}</span>` : ''}<span class="activity-kind mut">${esc(e.kind || '')}</span></div><div class="activity-desc activity-body" title="${esc(textStr)}">${esc(textStr)}</div></div>`;
   }).join('')}</div>`;
 }
 
