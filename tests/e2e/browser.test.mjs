@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findBrowser, launchBrowser } from '../helpers/cdp.mjs';
 
@@ -340,4 +340,29 @@ test('(i) 新任務表單可選「流程」(pipeline),並存進任務', { skip: 
   const t = tasks.find(x => x.title === '選流程的任務');
   assert.ok(t, '任務應已建立');
   assert.equal(t.pipeline, 'standard');
+});
+
+test('(j) worktree 專案:完成後 Detail 出現「合併到專案」,按下後變更進主目錄', { skip: skipMsg }, async () => {
+  const gitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-wt-'));
+  const g = (...a) => execFileSync('git', a, { cwd: gitDir, stdio: 'ignore' });
+  fs.writeFileSync(path.join(gitDir, 'work.txt'), 'base\n');
+  g('init'); g('config', 'user.email', 't@example.invalid'); g('config', 'user.name', 'T'); g('add', '.'); g('commit', '-m', 'base');
+  const post = (p, body) => fetch(`${baseUrl}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post('/api/projects', { id: 'wt-proj', name: 'wt', path: gitDir, worktrees: true })).status, 200);
+    assert.equal((await post('/api/tasks', { id: 'task-wt-e2e', title: 'worktree 任務', agent: 'codex-a', project: 'wt-proj', pipeline: 'single', status: 'todo' })).status, 200);
+    assert.equal((await post('/api/dispatch', { id: 'task-wt-e2e' })).status, 200);
+    await page.navigate(baseUrl);
+    await page.waitFor(() => typeof window.openDetail === 'function');
+    await page.evaluate(() => { window.confirm = () => true; });
+    await page.evaluate(() => window.openDetail('task-wt-e2e'));
+    await page.waitFor('button[data-detail-action="approve"]', { timeout: 15000 });
+    await page.click('button[data-detail-action="approve"]');
+    await page.waitFor('button[data-detail-action="merge"]', { timeout: 20000 });
+    assert.ok(await page.evaluate(() => document.body.textContent.includes('隔離分支')), '應顯示隔離分支區塊');
+    assert.ok(!fs.existsSync(path.join(gitDir, 'executed.marker')), '合併前,施工結果不可出現在專案主目錄');
+    await page.click('button[data-detail-action="merge"]');
+    await page.waitFor(() => !document.querySelector('button[data-detail-action="merge"]'), { timeout: 15000 });
+    assert.ok(fs.existsSync(path.join(gitDir, 'executed.marker')), '合併後,施工結果應進入專案主目錄');
+  } finally { fs.rmSync(gitDir, { recursive: true, force: true }); }
 });
