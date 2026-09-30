@@ -70,6 +70,33 @@ test('agy 真實輸出格式({"event":"result"})的用量能被解析(用真實�
   assert.equal(enriched.usage.output, 332);
 });
 
+test('codex / claude 的 raw log 用量(用真實樣本 fixture)優先於時間窗估算', () => {
+  const fx = f => fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'fixtures', f), 'utf8');
+  const root = tmp(), at = noon(2026, 5, 5).toISOString();
+  const run = { taskId: 'task-raw', runId: 'run-1', steps: [
+    { id: 'plan', agent: 'codex-x', startedAt: at, endedAt: at },
+    { id: 'review', agent: 'claude-x', startedAt: at, endedAt: at },
+  ] };
+  fs.mkdirSync(path.join(root, 'task-raw', 'run-1', 'raw'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'task-raw', 'run-1', 'raw', 'plan.log'), fx('codex-plan-sample.jsonl'));
+  fs.writeFileSync(path.join(root, 'task-raw', 'run-1', 'raw', 'review.log'), fx('claude-plan-sample.jsonl'));
+  // home 指到不存在的目錄:證明這兩個 step 的用量不是來自時間窗估算
+  const agents = [
+    { id: 'codex-x', type: 'codex', home: path.join(root, 'no-such-home'), price: { input: 1, cached: 0, output: 1 } },
+    { id: 'claude-x', type: 'claude', home: path.join(root, 'no-such-home2'), price: { input: 1, cached: 0, output: 1 } },
+  ];
+  const r = usageForRun(run, agents, root);
+  const [codex, claude] = r.steps;
+  assert.equal(codex.usage.available, true, 'codex raw log 必須解析得到用量');
+  assert.equal(codex.usage.input, 19791 - 12160, 'codex 的 input_tokens 含 cached 子集,需扣除');
+  assert.equal(codex.usage.cached, 12160);
+  assert.equal(codex.usage.output, 6);
+  assert.equal(claude.usage.available, true, 'claude raw log 必須解析得到用量');
+  assert.equal(claude.usage.input, 2 + 28332);
+  assert.equal(claude.usage.cached, 13809);
+  assert.equal(claude.usage.output, 6);
+});
+
 test('run analytics uses local time ranges and keeps empty windows unavailable', () => {
   const root = tmp(), at = noon(2026, 6, 2).toISOString();
   const run = { taskId: 'task-a', runId: 'run-1', steps: [{ id: 'execute', agent: 'agy', startedAt: at, endedAt: at }] };

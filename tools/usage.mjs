@@ -200,6 +200,48 @@ function agyRawUsage(file, agent) {
   return result;
 }
 
+// codex exec --json:每個 `turn.completed` 事件帶該 turn 的 usage;input_tokens 含 cached 子集,所以 input 要扣掉 cached。
+function codexRawUsage(file, agent) {
+  let any = false; const sum = { input: 0, cached: 0, output: 0 };
+  for (const line of lines(file)) {
+    const e = j(line);
+    if (e?.type !== 'turn.completed' || !e.usage || typeof e.usage !== 'object') continue;
+    const cached = Number(e.usage.cached_input_tokens) || 0;
+    sum.input += Math.max(0, (Number(e.usage.input_tokens) || 0) - cached);
+    sum.cached += cached;
+    sum.output += Number(e.usage.output_tokens) || 0;
+    any = true;
+  }
+  if (!any) return usageResult({}, false, 'codex raw json');
+  const r = usageResult(sum, true, 'codex raw json');
+  r.costEstimate = costOf(agent?.price || {}, r);
+  return r;
+}
+
+// claude -p --output-format stream-json:最後一個 `result` 事件帶整個 step 的 usage。
+function claudeRawUsage(file, agent) {
+  let u = null;
+  for (const line of lines(file)) {
+    const e = j(line);
+    if (e?.type === 'result' && e.usage && typeof e.usage === 'object') u = e.usage;
+  }
+  if (!u) return usageResult({}, false, 'claude raw stream-json');
+  const r = usageResult({
+    input: (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0),
+    cached: Number(u.cache_read_input_tokens) || 0,
+    output: Number(u.output_tokens) || 0,
+  }, true, 'claude raw stream-json');
+  r.costEstimate = costOf(agent?.price || {}, r);
+  return r;
+}
+
+function rawStepUsage(file, agent) {
+  if (agent.type === 'agy') return agyRawUsage(file, agent);
+  if (agent.type === 'codex') return codexRawUsage(file, agent);
+  if (agent.type === 'claude') return claudeRawUsage(file, agent);
+  return null;
+}
+
 const stepMoment = step => {
   const value = step?.endedAt || step?.startedAt;
   const ms = value ? +new Date(value) : NaN;
@@ -217,9 +259,14 @@ export function usageForRun(run, agents = [], runsRoot = '') {
   const steps = Array.isArray(run?.steps) ? run.steps.map(step => {
     const agent = byId.get(step.agent);
     let usage = usageResult({}, false, agent ? 'no usage data' : 'no agent');
-    if (agent?.type === 'agy') {
-      const raw = path.join(runsRoot, run.taskId || '', run.runId || '', 'raw', `${step.id}.log`);
-      usage = agyRawUsage(raw, agent);
+    // 優先讀該 step 的 raw log(各 CLI 的 JSON 輸出本身帶有準確用量);
+    // 只有讀不到才退回「時間窗比對本機 log」的估算(codex 的本機 log 沒有逐筆時間戳,估算很粗)。
+    const rawFile = path.join(runsRoot, run.taskId || '', run.runId || '', 'raw', `${step.id}.log`);
+    const fromRaw = agent ? rawStepUsage(rawFile, agent) : null;
+    if (fromRaw?.available) {
+      usage = fromRaw;
+    } else if (agent?.type === 'agy') {
+      usage = fromRaw || usage;
     } else if (agent && step.startedAt) {
       const range = usageInRange(agent, step.startedAt, step.endedAt || Date.now());
       if (range) usage = { ...range, available: true, source: 'agent local log' };
