@@ -305,3 +305,9 @@ function pipelineOptionsHtml(list = []) {
   const opts = (Array.isArray(list) ? list : []).filter(p => p && p.valid && p.id !== 'decompose');
   return '<option value="">(依專案預設;沒有就用 single)</option>' + opts.map(p => '<option value="' + esc(p.id) + '">' + esc(p.id) + ' — ' + esc(String(p.description || '').slice(0, 48)) + '</option>').join('');
 }
+
+// 依賴欄位輸入 "0, 2" → [0, 2]。空字串必須是 [] ——曾因 Number('') === 0,
+// 讓「沒有依賴」被解讀成「依賴第 0 張」(第 0 張變成自我依賴、其他張被悄悄加上錯誤依賴)。
+function parseDepsInput(str) {
+  return String(str ?? '').split(',').map(s => s.trim()).filter(s => s !== '').map(Number).filter(n => Number.isInteger(n) && n >= 0);
+}

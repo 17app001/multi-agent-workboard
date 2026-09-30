@@ -520,7 +520,7 @@ function collectDraftFromDom(){
   const files=row.querySelector('.draft-files')?.value.trim()||'';
   const agentSuggestion=row.querySelector('.draft-agent')?.value.trim()||'';
   const depsStr=row.querySelector('.draft-deps')?.value.trim()||'';
-  const dependsOn=depsStr.split(',').map(s=>Number(s.trim())).filter(n=>Number.isInteger(n));
+  const dependsOn=parseDepsInput(depsStr);
   updated.push({index:i,title,goal,acceptance,files,agentSuggestion,dependsOn});
  });
  currentDecomposeDraft=updated;

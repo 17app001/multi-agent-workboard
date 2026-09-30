@@ -65,7 +65,8 @@ if (control.hang === mode) {
     process.exitCode = 1;
   } else {
   let text;
-  if (mode === 'plan') text = `# Plan\n- step A (plan #${n})\n- 預計動到 src/a.js`;
+  if (mode === 'plan' && prompt.includes('需求拆解產出規範')) text = JSON.stringify([{ title: '拆解任務甲', goal: '先做甲', acceptance: '甲完成', files: 'a.js', agentSuggestion: 'codex-a', dependsOn: [] }, { title: '拆解任務乙', goal: '再做乙', acceptance: '乙完成', files: 'b.js', agentSuggestion: 'codex-a', dependsOn: [0] }]);
+  else if (mode === 'plan') text = `# Plan\n- step A (plan #${n})\n- 預計動到 src/a.js`;
   else if (mode === 'review') {
     const vs = control.verdicts || ['PASS'];
     text = control.verdictRaw || `VERDICT: ${vs[Math.min(n - 1, vs.length - 1)]}\n審查第 ${n} 次的理由`;

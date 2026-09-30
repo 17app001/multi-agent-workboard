@@ -14,7 +14,7 @@ const indexSrc = fs.readFileSync(path.join(repo, 'web/index.html'), 'utf8');
 const detailSrc = fs.readFileSync(path.join(repo, 'web/detail.js'), 'utf8');
 
 const ctx = vm.createContext({});
-vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, analyticsHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml, decomposeDraftTableHtml };', ctx);
+vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, analyticsHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml, decomposeDraftTableHtml, parseDepsInput };', ctx);
 const R = ctx.api;
 const detailCtx = vm.createContext({ Date, Object });
 vm.runInContext(detailSrc + '\n;this.api = { detailHtml, detailEsc };', detailCtx);
@@ -196,4 +196,14 @@ test('Codex quota card escapes API data and renders warning, stale, and missing 
   assert.match(html, /quota-danger/);
   assert.match(html, /quota-stale/);
   assert.match(R.agentsListHtml(agent, [], [], {}, []), /\u5c1a\u7121\u984d\u5ea6\u8cc7\u6599/);
+});
+
+test('parseDepsInput:空字串是 [](不可變成 [0] 造成自我依賴);支援空白、多個、忽略非法值', () => {
+  const p = R.parseDepsInput;
+  assert.deepEqual([...p('')], []);
+  assert.deepEqual([...p('   ')], []);
+  assert.deepEqual([...p(undefined)], []);
+  assert.deepEqual([...p('0')], [0]);
+  assert.deepEqual([...p('0, 2 ,3')], [0, 2, 3]);
+  assert.deepEqual([...p('a,,1,-1,1.5')], [1]);
 });

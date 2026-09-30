@@ -366,3 +366,38 @@ test('(j) worktree 專案:完成後 Detail 出現「合併到專案」,按下後
     assert.ok(fs.existsSync(path.join(gitDir, 'executed.marker')), '合併後,施工結果應進入專案主目錄');
   } finally { fs.rmSync(gitDir, { recursive: true, force: true }); }
 });
+
+test('(k) 需求自動拆解:開始拆解 → 出現草案 → 編輯標題 → 確認建立任務卡(含依賴)', { skip: skipMsg }, async () => {
+  await page.navigate(baseUrl);
+  await page.waitFor('#decomposeBtn');
+  await page.click('#decomposeBtn');
+  await page.waitFor('#decomposeModal:not([hidden])');
+  await page.type('#dRequirement', '為示範專案加上兩個功能並且有依賴關係');
+  await page.click('#dStart');
+  // 草案出現(拆解 run 停在 needs-you,草案可檢視編輯)
+  // 標題在 <input value> 裡,不在 textContent;以列數與 input 值判斷
+  await page.waitFor(() => document.querySelectorAll('#decomposeDraftArea [data-draft-row]').length === 2, { timeout: 20000 });
+  const firstTitle = await page.evaluate(() => document.querySelector('#decomposeDraftArea input[data-field="title"][data-idx="0"]').value);
+  assert.equal(firstTitle, '拆解任務甲');
+  const n = await page.evaluate(() => document.querySelectorAll('#decomposeDraftArea [data-draft-row]').length);
+  assert.equal(n, 2, '應有 2 列草案');
+  // 編輯第一列標題
+  await page.evaluate(() => {
+    const el = document.querySelector('#decomposeDraftArea input[data-field="title"][data-idx="0"]');
+    el.value = '拆解任務甲(已編輯)'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.evaluate(() => { window.__toasts = []; const o = window.showToast; window.showToast = (m, ty) => { window.__toasts.push(ty + ':' + m); return o(m, ty); }; });
+  await page.click('#decomposeConfirmBtn');
+  await page.waitFor(async () => true); // 讓事件迴圈轉一圈
+  let created = null;
+  for (let i = 0; i < 40 && !created; i++) {
+    const tasks = await (await fetch(`${baseUrl}/api/tasks`)).json();
+    const a = tasks.find(x => x.title === '拆解任務甲(已編輯)'), b = tasks.find(x => x.title === '拆解任務乙');
+    if (a && b) created = { a, b };
+    else await new Promise(r => setTimeout(r, 250));
+  }
+  if (!created) { const tasks = await (await fetch(`${baseUrl}/api/tasks`)).json(); console.log('DEBUG', JSON.stringify(tasks.map(x => [x.id, x.title, x.status])), JSON.stringify(await page.evaluate(() => window.__toasts))); }
+  assert.ok(created, '確認後應建立兩張任務卡(第一張用編輯後的標題)');
+  assert.equal(created.a.status, 'backlog', '建立的卡預設 backlog,不自動派工');
+  assert.ok(String(created.b.dependsOn || '').includes(created.a.id), '乙應依賴甲');
+});
