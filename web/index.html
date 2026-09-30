@@ -91,10 +91,10 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
     </div>
   </div>
 </div>
+<script src=render.js></script>
 <script>
-const $=s=>document.querySelector(s),api=(p,o)=>fetch('/api/'+p,o).then(r=>r.json());
-const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':n;
-const STATUS_LABEL={running:'執行中',exited:'已完成',failed:'失敗',error:'啟動失敗',stopped:'已停止',unknown:'狀態未知',none:'尚未派工過'};
+// 所有請求都帶 content-type: application/json(server 會拒絕非 JSON 的變更請求,擋 CSRF);esc/fmt/樣板在 render.js
+const $=s=>document.querySelector(s),api=(p,o={})=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>r.json());
 let cfg,tasks=[],projects=[],runStatus={},openLogId=null,userStopping={};
 function beep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
  o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(ctx.currentTime+.15);
@@ -116,32 +116,9 @@ function checkRunTransitions(prevRun){Object.keys(prevRun).forEach(id=>{const wa
  else if(now==='failed'||now==='error')notify('任務失敗','『'+title+'』執行失敗,請查看 log')})}
 async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
  cfg??=await api('config');projects=await api('projects');tasks=await api('tasks');render();checkTaskTransitions(prevStatus);
- api('usage').then(u=>{$('#usage').innerHTML=u.map(a=>{const mx=Math.max(1,...a.days.map(d=>d.total));
-  return `<div class=card><b>${a.label}</b> <span class=mut>${a.id}</span>${a.found?`
-  <div class=big>${fmt(a.today)} <span class=mut>今日</span></div>
-  <div class=mut>7日 ${fmt(a.week)} · 累計 ${fmt(a.total)}</div>
-  <div class=mut>≈ $${a.costToday.toFixed(2)} 今日 · $${a.costWeek.toFixed(2)} 7日 · $${a.costTotal.toFixed(2)} 累計</div>
-  <div class=mut>in ${fmt(a.input)} · cache ${fmt(a.cached)} · out ${fmt(a.output)}</div>
-  <div class=bar>${a.days.map(d=>`<i title="${d.date}: ${fmt(d.total)}" style="height:${d.total/mx*100}%"></i>`).join('')}</div>`
-  :`<div class=mut>${a.enabled===false?'未設定(已停用)':'未設定 / 尚無使用記錄'}</div>`}</div>`}).join('')})}
-function badge(t){const r=runStatus[t.id];if(!r||r.status==='none')return '';
- return `<span class="badge b-${r.status}">${STATUS_LABEL[r.status]||r.status}</span>`}
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function projLine(t){if(!t.project)return '<div class=warn>⚠ 未綁定專案:會在看板 repo 內執行</div>';
- const p=projects.find(x=>x.id===t.project);
- if(!p)return `<div class=warn>⚠ 專案「${esc(t.project)}」不存在,無法派工</div>`;
- return `<div class=row><span class=ptag>📂 ${esc(p.name||p.id)}</span>${p.valid?'':'<span class=warn>⚠ 路徑失效,無法派工</span>'}</div>`}
-function render(){$('#cols').innerHTML=cfg.columns.map(c=>`<div class=col data-c=${c}><h3>${c} (${tasks.filter(t=>t.status==c).length})</h3>${
- tasks.filter(t=>t.status==c).map(t=>`<div class="card t ${t.priority}" draggable=true data-id=${t.id}><b>${t.title}</b>
- <div class=row><select data-id=${t.id}><option value="">未指派</option>${cfg.agents.map(a=>`<option value=${a.id} ${a.id==t.agent?'selected':''}>${a.label}</option>`).join('')}</select>
- <span class=mut>${t.priority}</span> ${badge(t)}</div>
- ${projLine(t)}
- ${t.goal?`<div class=mut>🎯 ${esc(t.goal)}</div>`:''}
- ${t.files?`<div class=mut>📁 ${t.files}</div>`:''}
- <div class=row>${t.agent&&t.status!='done'?`<button data-run=${t.id}>▶ 派工</button>`:''}
- ${runStatus[t.id]?.status==='running'?`<button class="iconbtn stop" data-stop=${t.id}>■ 停止</button>`:''}
- <button class=iconbtn data-log=${t.id}>📜 log</button>
- <button class="iconbtn danger" data-del=${t.id}>🗑 刪除</button></div></div>`).join('')}</div>`).join('')}
+ api('usage').then(u=>{$('#usage').innerHTML=u.map(usageCardHtml).join('')})
+}
+function render(){$('#cols').innerHTML=columnsHtml(cfg,tasks,projects,runStatus)}
 const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
 document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
 document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
@@ -173,12 +150,12 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('change',e=>{if(e.target.matches('select')&&e.target.dataset.id)post({id:e.target.dataset.id,agent:e.target.value})});
 $('#add').onclick=()=>{['#fTitle','#fGoal','#fAcc','#fFiles'].forEach(s=>$(s).value='');
- $('#fProject').innerHTML='<option value="">(不綁定:在看板 repo 內執行)</option>'+projects.map(p=>`<option value="${esc(p.id)}"${p.valid?'':' disabled'}>${esc(p.name||p.id)}${p.valid?'':'(路徑失效)'}</option>`).join('');
+ $('#fProject').innerHTML=projectOptionsHtml(projects);
  $('#taskModal').hidden=false;$('#fTitle').focus()};
 $('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
 $('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){alert('請填標題');return}
  await post({title,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true};
-function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(p=>`<div class=row><span><b>${esc(p.name||p.id)}</b> <span class=mut>${esc(p.id)} · ${esc(p.path)}</span> ${p.valid?'':'<span class=warn>⚠ 路徑失效</span>'}</span><button class="iconbtn danger" data-pdel="${esc(p.id)}">🗑 刪除</button></div>`).join(''):'<div class=mut>尚無專案</div>'}
+function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(projectRowHtml).join(''):'<div class=mut>尚無專案</div>'}
 $('#projBtn').onclick=()=>{paintProjects();$('#projModal').hidden=false};
 $('#projClose').onclick=()=>{$('#projModal').hidden=true};
 $('#projSave').onclick=async()=>{const r=await api('projects',{method:'POST',body:JSON.stringify({id:$('#pId').value.trim(),name:$('#pName').value.trim(),path:$('#pPath').value.trim()})});

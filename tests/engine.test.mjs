@@ -70,6 +70,15 @@ async function mkTask(id, { pipeline, control = {}, agent = 'codex-a', extra = {
   return dir;
 }
 const dispatch = (id, body = {}) => post('/api/dispatch', { id, ...body });
+const waitNeeds = (id, reason, ms) => waitFor(async () => { const r = await getRun(id); return r && r.status === 'needs-you' && r.needsYou?.reason === reason ? r : null; }, ms, `${id} needs-you/${reason}`);
+// 派工 → 等到 plan 關卡 → 核准(所有 pipeline 都有 human gate,測 execute 行為的測試都要先過關)
+async function startApproved(id, body = {}) {
+  const d = await dispatch(id, body);
+  assert.equal(d.status, 200, JSON.stringify(d.json));
+  await waitNeeds(id, 'approval');
+  const a = await post(`/api/runs/${id}/approve`);
+  assert.equal(a.status, 200, JSON.stringify(a.json));
+}
 
 before(async () => {
   fs.cpSync(path.join(repo, 'tools'), path.join(sandbox, 'tools'), { recursive: true });
@@ -77,32 +86,40 @@ before(async () => {
   fs.copyFileSync(path.join(repo, 'tests/fixtures/fake-cli.mjs'), fakeCli);
   fs.mkdirSync(path.join(sandbox, 'board/tasks'), { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'web'), { recursive: true });
-  fs.writeFileSync(path.join(sandbox, 'legacy-agent.mjs'),
-    `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(path.join(sandbox, 'legacy-out.json'))}, JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));\n`);
   const price = { input: 0, cached: 0, output: 0 };
   fs.writeFileSync(path.join(sandbox, 'agents.json'), JSON.stringify({
     columns: ['backlog', 'todo', 'doing', 'review', 'done'],
     agents: [
       { id: 'claude', type: 'claude', label: 'Fake Claude', home: path.join(sandbox, 'h1'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
       { id: 'codex-a', type: 'codex', label: 'Fake Codex', home: path.join(sandbox, 'h2'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
-      { id: 'legacy', type: 'claude', label: 'Legacy', home: path.join(sandbox, 'h3'), cmd: process.execPath, args: [path.join(sandbox, 'legacy-agent.mjs')], price },
+      { id: 'agy-a', type: 'agy', label: 'Fake Agy', home: path.join(sandbox, 'h3'), cmd: process.execPath, cmdPrefix: [fakeCli], price },
     ],
   }));
   // 測試用 pipeline:由真實 standard.json 衍生(只把 test 指令換成 node t.js,避免每次跑 npm),以及幾個小型的
   const std = JSON.parse(fs.readFileSync(path.join(repo, 'pipelines/standard.json'), 'utf8'));
   const wp = (o) => fs.writeFileSync(path.join(sandbox, 'pipelines', o.id + '.json'), JSON.stringify(o));
   wp({ ...std, id: 'stdfast', steps: std.steps.map(s => (s.type === 'command' ? { ...s, command: 'node t.js' } : s)) });
+  const gatedPlan = { id: 'plan', agent: 'claude', mode: 'plan', output: 'plan.md', gate: 'human' };
   const loopSteps = [
-    { id: 'code', agent: 'codex-a', mode: 'execute' },
+    gatedPlan,
+    { id: 'code', agent: 'codex-a', mode: 'execute', input: ['plan.md'] },
     { id: 'test', type: 'command', command: 'node t.js' },
     { id: 'review', agent: 'claude', mode: 'review', input: ['test.txt'], output: 'review.md' },
     { id: 'revise', agent: 'codex-a', mode: 'execute', when: 'review.failed', input: ['review.md'], loopTo: 'test' },
   ];
   wp({ id: 'lim', maxRevisions: 2, steps: loopSteps });
   wp({ id: 'nrev', maxRevisions: 0, steps: loopSteps });
-  wp({ id: 'hang', steps: [{ id: 'work', agent: 'codex-a', mode: 'execute' }] });
-  wp({ id: 'perm', steps: [{ id: 'work', agent: 'codex-a', mode: 'execute' }] });
-  wp({ id: 'tmo', steps: [{ id: 'work', agent: 'codex-a', mode: 'execute', timeoutMs: 800 }] });
+  const work = extra => ({ id: 'work', agent: 'codex-a', mode: 'execute', input: ['plan.md'], ...extra });
+  wp({ id: 'hang', steps: [gatedPlan, work()] });
+  wp({ id: 'perm', steps: [gatedPlan, work()] });
+  wp({ id: 'tmo', steps: [gatedPlan, work({ timeoutMs: 800 })] });
+  // 安全測試用:第一步就是 execute、沒有 human gate(必須被驗證器拒絕)
+  wp({ id: 'unsafe', steps: [{ id: 'code', agent: 'codex-a', mode: 'execute' }] });
+  wp({ id: 'agyflow', maxRevisions: 0, steps: [
+    { id: 'plan', agent: 'agy-a', mode: 'plan', output: 'plan.md', gate: 'human' },
+    { id: 'code', agent: 'codex-a', mode: 'execute', input: ['plan.md'] },
+    { id: 'review', agent: 'agy-a', mode: 'review', input: ['plan.md'], output: 'review.md' },
+  ] }); // agy 串流測試:plan / review 由 agy 擔任(fake CLI 把文字切成多段 text_delta)
   await startServer();
   engineMod = await import(pathToFileURL(path.join(sandbox, 'tools/engine.mjs')).href + '?t=' + Date.now());
 });
@@ -129,7 +146,35 @@ test('(a) 內建 standard / single 驗證通過,review 不是 gemini', () => {
   assert.deepEqual(std.steps.map(s => s.id), ['plan', 'code', 'test', 'review', 'revise']);
   assert.equal(std.steps[0].gate, 'human');
   assert.ok(!std.steps.some(s => s.agent === 'gemini'));
-  assert.equal(engineMod.loadPipeline('single', agents).allowNoGate, true);
+  assert.equal(engineMod.loadPipeline('single', agents).allowNoGate, undefined, 'allowNoGate 已整個移除');
+  assert.equal(engineMod.loadPipeline('single', agents).steps[0].gate, 'human');
+});
+
+test('(a) 安全不變式:execute 之前必須有無條件的 human-gate plan(execute-only / 無 gate / gate 在後 / gate 帶 when 全部被拒)', () => {
+  const agents = JSON.parse(fs.readFileSync(path.join(sandbox, 'agents.json'), 'utf8')).agents;
+  const errs = def => engineMod.validatePipeline(def, agents).errors.join('|');
+  const RE = /gate:"human" 的 plan step/;
+  const P = { id: 'p', agent: 'claude', mode: 'plan', gate: 'human' };
+  const X = { id: 'a', agent: 'claude', mode: 'execute' };
+  assert.match(errs({ id: 'x', steps: [X] }), RE, 'execute-only');
+  assert.match(errs({ id: 'x', steps: [{ ...P, gate: undefined }, X] }), RE, 'plan 沒有 gate');
+  assert.match(errs({ id: 'x', steps: [X, P] }), RE, 'gate 在 execute 之後');
+  assert.match(errs({ id: 'x', steps: [{ ...P, mode: 'review' }, X] }), RE, 'gate 不在 plan 類 step');
+  assert.match(errs({ id: 'x', steps: [{ id: 'p0', agent: 'claude', mode: 'plan', output: 'p0.md' }, { ...P, when: 'p0.failed' }, X] }), RE, '帶 when 的 gate 會被略過');
+  assert.match(errs({ id: 'x', steps: [{ id: 'c', type: 'command', command: 'x', gate: 'human' }, X] }), RE, 'command step 不算 plan');
+  assert.equal(engineMod.validatePipeline({ id: 'x', steps: [P, X] }, agents).ok, true);
+  // 由檔案載入也一樣被拒(pipelines/unsafe.json 第一步就是 execute)
+  assert.throws(() => engineMod.loadPipeline('unsafe', agents), /驗證失敗.*gate:"human" 的 plan step/);
+  const pl = engineMod.listPipelines().find(p => p.id === 'unsafe');
+  assert.equal(pl.valid, false);
+});
+
+test('(a) artifact input 必須由「更早的 step」的 output 產生', () => {
+  const agents = JSON.parse(fs.readFileSync(path.join(sandbox, 'agents.json'), 'utf8')).agents;
+  const errs = def => engineMod.validatePipeline(def, agents).errors.join('|');
+  assert.match(errs({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', input: ['nope.md'] }] }), /input "nope\.md" 不是任何「更早的 step」的 output/);
+  assert.match(errs({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', input: ['b.md'] }, { id: 'b', agent: 'claude', mode: 'plan', output: 'b.md' }] }), /input "b\.md"/, '產出者在後面不算');
+  assert.equal(engineMod.validatePipeline({ id: 'x', steps: [{ id: 'a', agent: 'claude', mode: 'plan', output: 'a.md' }, { id: 'c', type: 'command', command: 'x' }, { id: 'b', agent: 'claude', mode: 'plan', input: ['a.md', 'c.txt'] }] }, agents).ok, true, 'command 未宣告 output 時預設 <id>.txt 也算產出');
 });
 
 test('(a) 各種非法 pipeline 都有明確錯誤訊息', () => {
@@ -303,8 +348,8 @@ test('(e) 測試指令失敗時,即使 review 回 PASS 也判 FAIL 並回修', a
 test('(f) 連續 FAIL 超過 maxRevisions → needs-you(revision-limit);resolve retry / complete', async () => {
   const id = 't-limit';
   await mkTask(id, { pipeline: 'lim', control: { verdicts: ['FAIL'] } });
-  await dispatch(id);
-  const r = await waitStatus(id, 'needs-you', 30000);
+  await startApproved(id);
+  const r = await waitNeeds(id, 'revision-limit', 30000);
   assert.equal(r.needsYou.reason, 'revision-limit');
   assert.equal(r.revisions, 2);
   assert.equal(callsOf(id, 'review').length, 3);
@@ -317,19 +362,26 @@ test('(f) 連續 FAIL 超過 maxRevisions → needs-you(revision-limit);resolve 
   await waitFor(() => callsOf(id, 'execute').length >= 4);
   const r2 = await waitFor(async () => { const x = await getRun(id); return x.status === 'needs-you' && callsOf(id, 'execute').length === 5 ? x : null; }, 30000);
   assert.equal(r2.needsYou.reason, 'revision-limit');
+  assert.equal(r2.steps[4].status, 'pending', 'complete 前:未完成的 revise step 是 pending');
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'complete' })).status, 200);
   const fin = await getRun(id);
   assert.equal(fin.status, 'completed');
+  // 審查 #7:未完成的 step 不能留成 pending 卻標 run completed → 標成 waived,並有 force-complete 事件
+  assert.equal(fin.steps[4].status, 'waived');
+  assert.deepEqual(fin.steps.map(x => x.status), ['done', 'done', 'done', 'done', 'waived']);
+  const evs = (await api(`/api/runs/${id}/events`)).json;
+  const fc = evs.filter(e => e.phase === 'force-complete');
+  assert.equal(fc.length, 1);
+  assert.equal(fc[0].step, 'revise');
   assert.equal((await api('/api/tasks')).json.find(x => x.id === id).state, 'completed');
 });
 
 test('(f) resolve abort → cancelled;VERDICT 解析不到視為 FAIL 並記事件', async () => {
   const id = 't-noverdict';
   await mkTask(id, { pipeline: 'nrev', control: { verdictRaw: '看起來不錯,沒有格式化結論' } });
-  await dispatch(id);
-  const r = await waitStatus(id, 'needs-you', 20000);
-  assert.equal(r.needsYou.reason, 'revision-limit');
-  assert.equal(r.steps[2].verdict, 'FAIL');
+  await startApproved(id);
+  const r = await waitNeeds(id, 'revision-limit', 20000);
+  assert.equal(r.steps[3].verdict, 'FAIL');
   const evs = (await api(`/api/runs/${id}/events`)).json;
   assert.ok(evs.some(e => e.kind === 'error' && /解析不到 VERDICT/.test(e.text)));
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'abort' })).status, 200);
@@ -349,32 +401,32 @@ test('parseVerdict:只看首個非空行', () => {
 test('(g) stop 能砍掉卡住的行程(pid 不再存活),之後 retry 從該 step 重跑', async () => {
   const id = 't-stop';
   const dir = await mkTask(id, { pipeline: 'hang', control: { hang: 'execute' } });
-  assert.equal((await dispatch(id)).status, 200);
+  await startApproved(id);
   await waitFor(() => fs.existsSync(path.join(dir, 'hang.pid')));
   const pid = +fs.readFileSync(path.join(dir, 'hang.pid'), 'utf8');
   const r = await getRun(id);
   assert.equal(r.status, 'running');
-  assert.equal(r.steps[0].pid, pid, 'run.json 記的 pid 就是實際行程');
+  assert.equal(r.steps[1].pid, pid, 'run.json 記的 pid 就是實際行程');
   assert.ok(alive(pid));
   const st = await post(`/api/runs/${id}/stop`);
   assert.equal(st.status, 200, JSON.stringify(st.json));
   await waitFor(() => !alive(pid), 8000, 'pid 死亡');
   const r2 = await getRun(id);
   assert.equal(r2.status, 'cancelled');
-  assert.equal(r2.steps[0].status, 'stopped');
+  assert.equal(r2.steps[1].status, 'stopped');
   assert.equal((await api('/api/tasks')).json.find(x => x.id === id).state, 'cancelled');
   assert.equal((await post(`/api/runs/${id}/stop`)).status, 400, '沒有進行中的 run 不能再停');
   // 續跑:換成不卡住的設定,retry 從被停的 step 重跑
   fs.writeFileSync(path.join(dir, 'fake-control.json'), '{}');
   assert.equal((await post(`/api/runs/${id}/retry`)).status, 200);
   const fin = await waitStatus(id, 'completed');
-  assert.equal(fin.steps[0].attempts, 2);
+  assert.equal(fin.steps[1].attempts, 2);
 });
 
 test('(g) 舊的 /api/tasks/:id/stop 也能停新引擎的 run;逾時(timeoutMs)→ needs-you 並砍行程', async () => {
   const id = 't-stop2';
   const dir = await mkTask(id, { pipeline: 'hang', control: { hang: 'execute' } });
-  await dispatch(id);
+  await startApproved(id);
   await waitFor(() => fs.existsSync(path.join(dir, 'hang.pid')));
   const pid = +fs.readFileSync(path.join(dir, 'hang.pid'), 'utf8');
   const lg = (await api(`/api/tasks/${id}/log`)).json;
@@ -386,9 +438,16 @@ test('(g) 舊的 /api/tasks/:id/stop 也能停新引擎的 run;逾時(timeoutMs)
 
   const id2 = 't-timeout';
   const dir2 = await mkTask(id2, { pipeline: 'tmo', control: { hang: 'execute' } });
-  await dispatch(id2);
-  const r = await waitStatus(id2, 'needs-you', 15000);
+  await startApproved(id2);
+  const r = await waitNeeds(id2, 'timeout', 15000);
   assert.equal(r.needsYou.reason, 'timeout');
+  // 審查 #7:timeout 類不能 complete(只能 retry/abort),step 狀態與 run 都不變
+  const cc = await post(`/api/runs/${id2}/resolve`, { action: 'complete' });
+  assert.equal(cc.status, 409);
+  assert.match(cc.json.error, /timeout/);
+  const still = await getRun(id2);
+  assert.equal(still.status, 'needs-you');
+  assert.equal(still.steps[1].status, 'blocked');
   const pid2 = +fs.readFileSync(path.join(dir2, 'hang.pid'), 'utf8');
   await waitFor(() => !alive(pid2), 8000);
 });
@@ -421,73 +480,241 @@ test('(h) events.jsonl 有標準化事件、since 可分段;artifacts 端點防�
   assert.equal((await api('/api/runs/no-such-task')).status, 404);
 });
 
-// ------------------------------------------------------------------ 權限被拒 / noGate / 相容
-test('execute 遇到權限被拒訊號 → needs-you(permission),不無限等待;plan 模式的拒絕不算', async () => {
+// ------------------------------------------------------------------ 權限被拒 / 核准關卡不可繞過
+test('execute 遇到權限被拒訊號 → needs-you(permission),不無限等待;permission 類不能 complete(只能 retry/abort)', async () => {
   const id = 't-perm';
   await mkTask(id, { pipeline: 'perm', control: { denyExecute: true } });
-  await dispatch(id);
-  const r = await waitStatus(id, 'needs-you', 15000);
+  await startApproved(id);
+  const r = await waitNeeds(id, 'permission', 15000);
   assert.equal(r.needsYou.reason, 'permission');
-  assert.equal(r.steps[0].status, 'blocked');
-  assert.ok(r.steps[0].blocked.length >= 1);
+  assert.equal(r.steps[1].status, 'blocked');
+  assert.ok(r.steps[1].blocked.length >= 1);
+  // 審查 #7:permission 類 complete 回 409,run 與 step 狀態都不變
+  const cc = await post(`/api/runs/${id}/resolve`, { action: 'complete' });
+  assert.equal(cc.status, 409);
+  assert.match(cc.json.error, /permission/);
+  const still = await getRun(id);
+  assert.equal(still.status, 'needs-you');
+  assert.equal(still.steps[1].status, 'blocked');
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'abort' })).status, 200);
 });
 
-test('single pipeline:@task agent;plan 先 gate,noGate 可關(standard 不可)', async () => {
+test('single pipeline:@task agent;plan 先 gate;request 帶 noGate 被完全忽略,仍必須核准才 execute(含 standard)', async () => {
   const id = 't-single';
   await mkTask(id, { pipeline: 'single', agent: 'claude' });
   await dispatch(id);
-  const r = await waitStatus(id, 'needs-you');
+  const r = await waitNeeds(id, 'approval');
   assert.equal(r.steps[0].agent, 'claude');
   assert.equal(callsOf(id, 'execute').length, 0);
   await post(`/api/runs/${id}/approve`);
   await waitStatus(id, 'completed');
   assert.equal(callsOf(id, 'execute')[0].flavor, 'claude');
 
-  const id2 = 't-nogate';
-  await mkTask(id2, { pipeline: 'single', agent: 'codex-a' });
-  assert.equal((await dispatch(id2, { noGate: true })).status, 200);
-  await waitStatus(id2, 'completed');
-  assert.equal(callsOf(id2, 'execute').length, 1);
-
-  const id3 = 't-nogate-std';
-  await mkTask(id3, { pipeline: 'stdfast' });
-  const bad = await dispatch(id3, { noGate: true });
-  assert.equal(bad.status, 400);
-  assert.match(bad.json.error, /noGate/);
-  assert.equal(callsOf(id3, 'plan').length, 0);
+  // 舊的 noGate:仍回 200(參數被忽略),但 execute 在核准前絕不啟動
+  for (const [tid, pipeline] of [['t-nogate', 'single'], ['t-nogate-std', 'stdfast']]) {
+    const dir = await mkTask(tid, { pipeline, agent: 'codex-a' });
+    const d = await dispatch(tid, { noGate: true, allowNoGate: true });
+    assert.equal(d.status, 200, JSON.stringify(d.json));
+    await waitNeeds(tid, 'approval');
+    await sleep(1200); // 給引擎足夠時間「錯誤地」往下跑
+    const run = await getRun(tid);
+    assert.equal(run.noGate, undefined, 'run 不再有 noGate 欄位');
+    assert.equal(run.steps[0].status, 'awaiting-approval');
+    assert.equal(run.steps[1].status, 'pending');
+    assert.equal(callsOf(tid, 'execute').length, 0);
+    assert.ok(!fs.existsSync(path.join(dir, 'executed.marker')), `${tid}: 未核准前 execute 假 CLI 不可被啟動`);
+    assert.equal((await post(`/api/runs/${tid}/approve`)).status, 200);
+    await waitStatus(tid, 'completed');
+    assert.equal(callsOf(tid, 'execute').length, 1);
+  }
   // single 沒指派 agent → 拒絕
   await mkTask('t-noagent', { pipeline: 'single', agent: '' });
   assert.equal((await dispatch('t-noagent')).status, 400);
 });
 
-test('(i) 沒有 pipeline 的舊任務仍走原本單發派工;pipeline 檔不存在會報錯而非悄悄退回', async () => {
-  await post('/api/tasks', { id: 'old-1', title: '舊任務', agent: 'legacy', status: 'todo' });
-  fs.rmSync(path.join(sandbox, 'legacy-out.json'), { force: true });
+test('沒有 pipeline 欄位的任務一律預設 single(有 plan + gate),舊單發派工不可達;指定不存在的 pipeline → 400', async () => {
+  const dir = await mkTask('old-1', { agent: 'claude' }); // 不帶 pipeline、project 也沒有 defaultPipeline 覆寫(POST 預設 standard)
   const d = await dispatch('old-1');
   assert.equal(d.status, 200, JSON.stringify(d.json));
-  assert.ok(!d.json.engine);
-  assert.ok(d.json.log && d.json.pid);
-  await waitFor(() => fs.existsSync(path.join(sandbox, 'legacy-out.json')) && fs.statSync(path.join(sandbox, 'legacy-out.json')).size > 0);
-  const out = JSON.parse(fs.readFileSync(path.join(sandbox, 'legacy-out.json'), 'utf8'));
-  assert.equal(fs.realpathSync.native(out.cwd), fs.realpathSync.native(sandbox));
-  assert.match(out.args.at(-1), /先閱讀 AGENTS\.md/);
+  assert.equal(d.json.engine, true);
+  assert.equal(d.json.pid, null);
+  await waitNeeds('old-1', 'approval');
+  await sleep(800);
+  const run = await getRun('old-1');
+  assert.equal(run.pipeline, 'standard', '專案預設 standard(POST /api/projects 的預設值)');
+  assert.equal(callsOf('old-1', 'execute').length, 0);
+  assert.ok(!fs.existsSync(path.join(dir, 'executed.marker')));
   const lg = (await api('/api/tasks/old-1/log')).json;
-  assert.ok(lg.log && !lg.runId, '舊任務的 log viewer 仍回舊格式');
-  assert.equal((await api('/api/runs/old-1')).status, 404);
-  assert.ok(!fs.existsSync(path.join(sandbox, 'board/runs', 'old-1')), '舊派工不建 run 目錄');
-  // 舊狀態值仍可用,並附 v2 對映
-  const t = (await api('/api/tasks')).json.find(x => x.id === 'old-1');
-  assert.equal(t.status, 'doing');
-  assert.equal(t.state, 'running');
-  // 明確指定卻不存在的 pipeline
-  await post('/api/tasks', { id: 'old-2', title: 'x', agent: 'legacy', status: 'todo', pipeline: 'ghost' });
+  assert.ok(lg.runId, 'log viewer 回的是引擎 run,不是舊單發派工的 log');
+  assert.equal((await post('/api/runs/old-1/stop')).status, 200);
+
+  // 完全沒有 project 也沒有 pipeline 的任務 → 預設 single
+  await post('/api/tasks', { id: 'old-nop', title: 'old-nop', agent: 'claude', status: 'todo' });
+  const d2 = await dispatch('old-nop');
+  assert.equal(d2.status, 200, JSON.stringify(d2.json));
+  assert.equal(d2.json.pipeline, 'single');
+  await waitNeeds('old-nop', 'approval');
+  assert.equal(callsOf('old-nop', 'execute').length, 0);
+  assert.equal((await post('/api/runs/old-nop/stop')).status, 200);
+
+  // 明確指定卻不存在的 pipeline:報錯,不退回舊路徑,任務狀態不變、不建 run
+  await mkTask('old-2', { pipeline: 'ghost' });
   const g = await dispatch('old-2');
   assert.equal(g.status, 400);
-  assert.match(g.json.error, /找不到 pipeline/);
+  assert.match(g.json.error, /pipeline「ghost」不存在/);
+  assert.equal((await api('/api/runs/old-2')).status, 404);
+  assert.equal((await api('/api/tasks')).json.find(x => x.id === 'old-2').status, 'todo');
   // GET /api/pipelines
   const pl = (await api('/api/pipelines')).json;
   assert.ok(pl.find(p => p.id === 'standard' && p.valid));
+});
+
+test('execute-only pipeline(沒有 human-gate plan)被拒:dispatch 回 400,agent 完全不啟動', async () => {
+  const dir = await mkTask('t-unsafe', { pipeline: 'unsafe' });
+  const d = await dispatch('t-unsafe');
+  assert.equal(d.status, 400);
+  assert.match(d.json.error, /gate:"human" 的 plan step/);
+  await sleep(500);
+  assert.equal(calls('t-unsafe').length, 0);
+  assert.ok(!fs.existsSync(path.join(dir, 'executed.marker')));
+  assert.equal((await api('/api/runs/t-unsafe')).status, 404);
+  assert.equal((await api('/api/tasks')).json.find(x => x.id === 't-unsafe').status, 'todo');
+  // 執行期防線:即使 run.json 被手改成沒有 gate 的 pipelineDef,引擎也不會啟動 execute(assertGatesCleared)
+  const id = 't-tamper';
+  const tdir = await mkTask(id, { pipeline: 'single', agent: 'claude' });
+  await dispatch(id);
+  const r = await waitNeeds(id, 'approval');
+  await killServer();
+  const rj = path.join(sandbox, 'board/runs', id, r.runId, 'run.json');
+  const j = JSON.parse(fs.readFileSync(rj, 'utf8'));
+  j.pipelineDef.steps[0].gate = undefined; // 拿掉 gate
+  j.steps[0].status = 'pending'; j.cursor = 1; j.status = 'running'; j.needsYou = null; // 假裝 plan 已過,直接跳到 execute
+  fs.writeFileSync(rj, JSON.stringify(j));
+  await startServer();
+  const bad = await waitStatus(id, 'failed', 10000);
+  assert.match(bad.error, /gate 違規/);
+  assert.equal(callsOf(id, 'execute').length, 0);
+  assert.ok(!fs.existsSync(path.join(tdir, 'executed.marker')));
+});
+
+// ------------------------------------------------------------------ 缺 input artifact 硬失敗(審查 #5)
+test('缺 input artifact → step 失敗並進 needs-you(missing-input,寫明缺哪個檔),不啟動 agent;不能 complete;補檔後 retry 可繼續', async () => {
+  const id = 't-noinput';
+  const dir = await mkTask(id, { pipeline: 'stdfast' });
+  await dispatch(id);
+  const r0 = await waitNeeds(id, 'approval');
+  const planFile = path.join(sandbox, 'board/runs', id, r0.runId, 'artifacts/plan.md');
+  fs.rmSync(planFile); // 模擬檔案遺失
+  assert.equal((await post(`/api/runs/${id}/approve`)).status, 200);
+  const r = await waitNeeds(id, 'missing-input', 10000);
+  assert.match(r.needsYou.message, /plan\.md/);
+  assert.equal(r.steps[1].status, 'failed');
+  assert.match(r.steps[1].error, /缺少 input artifact: plan\.md/);
+  await sleep(500);
+  assert.equal(callsOf(id, 'execute').length, 0, 'execute agent 不可在缺 plan.md 時被啟動');
+  assert.ok(!fs.existsSync(path.join(dir, 'executed.marker')));
+  const evs = (await api(`/api/runs/${id}/events`)).json;
+  assert.ok(evs.some(e => e.kind === 'error' && /缺少 input artifact/.test(e.text)));
+  assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'complete' })).status, 409, 'missing-input 不能強制完成');
+  // 補檔 → retry 從失敗的 step 繼續,prompt 帶到真正的 plan 內容
+  fs.writeFileSync(planFile, '# Plan\n補回來的計畫 RESTORED');
+  assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'retry' })).status, 200);
+  await waitStatus(id, 'completed');
+  assert.match(callsOf(id, 'execute')[0].prompt, /補回來的計畫 RESTORED/);
+  assert.ok(!callsOf(id, 'execute')[0].prompt.includes('(尚未產生)'));
+});
+
+// ------------------------------------------------------------------ agy 串流(審查 #4)
+test('agy 串流:plan.md / review.md 取 result.response 的完整文字,不是最後一個 delta;VERDICT 首行正確', async () => {
+  const id = 't-agy';
+  const dir = await mkTask(id, { pipeline: 'agyflow', agent: 'claude' });
+  await dispatch(id);
+  const r = await waitNeeds(id, 'approval');
+  const planText = '# Plan\n- step A (plan #1)\n- 預計動到 src/a.js';
+  assert.equal((await api(`/api/runs/${id}/artifacts/plan.md`)).text, planText);
+  const raw = fs.readFileSync(path.join(sandbox, 'board/runs', id, r.runId, 'raw/plan.log'), 'utf8');
+  assert.ok(raw.split('\n').filter(l => l.includes('text_delta')).length >= 3, 'fixture 確實把回覆切成 3 段以上 delta');
+  assert.ok(raw.includes('"response"'), 'result 帶有完整 response');
+  assert.equal(callsOf(id, 'plan')[0].flavor, 'agy');
+  assert.equal(callsOf(id, 'plan')[0].flagMode, 'readonly');
+  await post(`/api/runs/${id}/approve`);
+  const done = await waitStatus(id, 'completed');
+  const review = (await api(`/api/runs/${id}/artifacts/review.md`)).text;
+  assert.equal(review, 'VERDICT: PASS\n審查第 1 次的理由');
+  assert.equal(done.steps[2].verdict, 'PASS', '首個 delta 只有 "VERDICT:" 一小段,只取最後一段會被誤判 FAIL');
+  assert.equal(fs.readFileSync(path.join(dir, 'executed.marker'), 'utf8'), '1');
+});
+
+test('agy 串流:result 沒有 response 時,依序串接所有 text_delta(不是只取最後一段)', async () => {
+  const id = 't-agy-nores';
+  await mkTask(id, { pipeline: 'agyflow', agent: 'claude', control: { agyNoResponse: true } });
+  await dispatch(id);
+  await waitNeeds(id, 'approval');
+  assert.equal((await api(`/api/runs/${id}/artifacts/plan.md`)).text, '# Plan\n- step A (plan #1)\n- 預計動到 src/a.js');
+  assert.equal((await post(`/api/runs/${id}/stop`)).status, 200);
+});
+
+// ------------------------------------------------------------------ 耐久性(審查 #6)
+test('run.json 用暫存檔 + rename 原子寫入:完成的 run 目錄沒有殘留暫存檔,run.json 是完整 JSON', async () => {
+  const run = await getRun('t-full');
+  const rd = path.join(sandbox, 'board/runs/t-full', run.runId);
+  assert.deepEqual(fs.readdirSync(rd).filter(f => /\.tmp-/.test(f)), []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(rd, 'run.json'), 'utf8')).runId, run.runId);
+  assert.ok(/writeFileAtomic/.test(fs.readFileSync(path.join(repo, 'tools/engine.mjs'), 'utf8')));
+});
+
+test('startRun 初始 run.json 寫入失敗 → 中止:丟錯誤、不啟動 agent、不建 run、任務狀態不變', async () => {
+  const id = 't-persist-fail';
+  await mkTask(id, { pipeline: 'single', agent: 'claude' });
+  const FIXED = 1700000000123;
+  const runDir = path.join(sandbox, 'board/runs', id, 'run-' + FIXED);
+  fs.mkdirSync(path.join(runDir, 'run.json'), { recursive: true }); // run.json 是資料夾 → rename 覆蓋必失敗
+  const origNow = Date.now; Date.now = () => FIXED;
+  try { assert.throws(() => engineMod.startRun(id), err => /run\.json 寫入失敗/.test(err.message) && err.status === 500); }
+  finally { Date.now = origNow; }
+  await sleep(800);
+  assert.equal(calls(id).length, 0, '沒有任何 agent 被啟動');
+  assert.ok(!fs.existsSync(runDir), '失敗的 run 目錄被清掉');
+  assert.equal(engineMod.getLatestRun(id), null);
+  assert.equal((await api('/api/runs/' + id)).status, 404);
+  assert.equal((await api('/api/tasks')).json.find(x => x.id === id).status, 'todo');
+});
+
+test('執行中寫入失敗不靜默:events.jsonl append 失敗 → console.error + run.persistError(並落到 run.json)', async () => {
+  const id = 't-persist-ev';
+  await mkTask(id, { pipeline: 'single', agent: 'claude' });
+  const FIXED = 1700000000456;
+  const runDir = path.join(sandbox, 'board/runs', id, 'run-' + FIXED);
+  fs.mkdirSync(path.join(runDir, 'events.jsonl'), { recursive: true }); // events.jsonl 是資料夾 → append 必失敗
+  const errs = []; const origErr = console.error; console.error = (...a) => errs.push(a.join(' '));
+  const origNow = Date.now; Date.now = () => FIXED;
+  try {
+    engineMod.startRun(id);
+    Date.now = origNow;
+    await waitFor(() => engineMod.getLatestRun(id)?.status === 'needs-you', 15000, 'in-process run needs-you');
+    const run = engineMod.getLatestRun(id);
+    assert.match(run.persistError, /^events\.jsonl:/);
+    assert.ok(errs.some(e => /events\.jsonl 寫入失敗/.test(e)));
+    assert.match(JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).persistError, /events\.jsonl/);
+    await engineMod.stopRun(id);
+  } finally { Date.now = origNow; console.error = origErr; }
+});
+
+// ------------------------------------------------------------------ taskkill(審查 #8)
+test('killTree:pid 必須是正整數,否則不執行;engine/dispatch 不再用 exec 字串插值 taskkill', async () => {
+  for (const bad of ['1; calc', '123', '1 & calc', 1.5, -1, 0, NaN, null, undefined, {}, [1]]) {
+    const r = await engineMod.killTree(bad);
+    assert.equal(r.ok, false, String(bad));
+    assert.match(r.error, /pid/);
+  }
+  const dispatchMod = await import(pathToFileURL(path.join(sandbox, 'tools/dispatch.mjs')).href + '?t=' + Date.now());
+  assert.equal(dispatchMod.isPidRunning('1 & calc'), false);
+  assert.equal(dispatchMod.isPidRunning(-5), false);
+  for (const f of ['engine.mjs', 'dispatch.mjs']) {
+    const src = fs.readFileSync(path.join(repo, 'tools', f), 'utf8');
+    assert.ok(!/[^\w.]exec\(/.test(src), `${f} 不可再用 exec(...)`);
+    assert.ok(/execFile\('taskkill', \['\/pid', String\(/.test(src), `${f} 用 execFile('taskkill', [...])`);
+  }
 });
 
 // ------------------------------------------------------------------ server 重啟後的持久化
@@ -509,7 +736,7 @@ test('重啟:等待核准中的 run 不需要行程,重啟後仍可核准並完�
 test('重啟:running 中的 run 以 pid 存活檢查接手,之後仍可 stop', async () => {
   const id = 't-restart-run';
   const dir = await mkTask(id, { pipeline: 'hang', control: { hang: 'execute' } });
-  await dispatch(id);
+  await startApproved(id);
   await waitFor(() => fs.existsSync(path.join(dir, 'hang.pid')));
   const pid = +fs.readFileSync(path.join(dir, 'hang.pid'), 'utf8');
   await killServer(); // 只殺 server,假 CLI(detached)還活著
@@ -527,7 +754,7 @@ test('重啟:running 中的 run 以 pid 存活檢查接手,之後仍可 stop', a
 test('重啟:running 的 run 若行程已在 server 關閉期間結束,接手時依 raw log 的 end 事件判定完成', async () => {
   const id = 't-restart-done';
   const dir = await mkTask(id, { pipeline: 'hang', control: { hang: 'execute' } });
-  await dispatch(id);
+  await startApproved(id);
   await waitFor(() => fs.existsSync(path.join(dir, 'hang.pid')));
   const pid = +fs.readFileSync(path.join(dir, 'hang.pid'), 'utf8');
   await killServer();
@@ -538,5 +765,5 @@ test('重啟:running 的 run 若行程已在 server 關閉期間結束,接手時
   await waitFor(() => !alive(pid), 8000);
   await startServer();
   const r = await waitStatus(id, 'completed', 15000);
-  assert.equal(r.steps[0].status, 'done');
+  assert.equal(r.steps[1].status, 'done');
 });

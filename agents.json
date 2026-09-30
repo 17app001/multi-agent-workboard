@@ -64,6 +64,19 @@
         "output": 10
       },
       "cmd": "gemini"
+    },
+    {
+      "id": "agy",
+      "type": "agy",
+      "label": "Antigravity (agy)",
+      "home": "~/AppData/Local/agy",
+      "args": [],
+      "price": {
+        "input": 1.25,
+        "cached": 0.31,
+        "output": 10
+      },
+      "cmd": "agy"
     }
   ],
   "columns": [

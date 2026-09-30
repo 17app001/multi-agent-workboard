@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
-import { dispatch, getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
+import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 import * as engine from './engine.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -19,6 +19,8 @@ function parse(file) {
   for (const l of (m?.[1] || '').split('\n')) { const i = l.indexOf(':'); if (i > 0) meta[l.slice(0, i).trim()] = l.slice(i + 1).trim(); }
   return { id: file.replace(/\.md$/, ''), ...meta, body: m?.[2] || raw };
 }
+// frontmatter scalar 一律壓成單行:\r、\n(以及 JS 也視為行界的 U+2028/2029)都換成空白,避免注入額外欄位
+const oneLine = v => String(v).replace(/[\r\n\u2028\u2029]+/g, ' ');
 function save(t) {
   const { id, body, ...meta } = t;
   meta.updated = new Date().toISOString().slice(0, 10);
@@ -27,7 +29,7 @@ function save(t) {
   const fields = ['title', 'status', 'agent', 'priority'];
   for (const k of ['files', 'project', 'pipeline', 'goal', 'acceptance']) if (meta[k]) fields.push(k);
   fields.push('updated');
-  const fm = fields.map(k => `${k}: ${meta[k] ?? ''}`).join('\n');
+  const fm = fields.map(k => `${k}: ${oneLine(meta[k] ?? '')}`).join('\n');
   fs.writeFileSync(path.join(tasksDir, id + '.md'), `---\n${fm}\n---\n${body}`);
 }
 // task 狀態:v2 值(draft/queued/running/needs-you/completed/failed/cancelled)與舊欄位值(backlog/todo/doing/review/done)並存。
@@ -41,12 +43,34 @@ const listProjects = () => {
   if (!fs.existsSync(projectsDir)) return [];
   const out = [];
   for (const f of fs.readdirSync(projectsDir).filter(f => f.endsWith('.json'))) {
-    try { const p = JSON.parse(fs.readFileSync(path.join(projectsDir, f), 'utf8')); out.push({ ...p, id: f.replace(/\.json$/, ''), valid: projectValid(p) }); } catch { /* 壞檔略過 */ }
+    const id = f.replace(/\.json$/, '');
+    try { const p = JSON.parse(fs.readFileSync(path.join(projectsDir, f), 'utf8')); out.push({ ...p, id, valid: projectValid(p) }); }
+    catch (e) { out.push({ id, valid: false, error: '專案檔讀取/JSON 解析失敗: ' + e.message }); } // 壞檔不能消失,UI 要看得到
   }
   return out;
 };
 const send = (res, code, data, type = 'application/json') => { res.writeHead(code, { 'content-type': type }); res.end(type === 'application/json' ? JSON.stringify(data) : data); };
-const readBody = req => new Promise(r => { let s = ''; req.on('data', c => (s += c)); req.on('end', () => r(JSON.parse(s || '{}'))); });
+const readBody = req => new Promise((ok, no) => {
+  let s = ''; req.on('data', c => (s += c)); req.on('error', no);
+  req.on('end', () => { try { const o = JSON.parse(s || '{}'); ok(o && typeof o === 'object' && !Array.isArray(o) ? o : {}); } catch { no(Object.assign(new Error('請求 body 不是合法 JSON'), { status: 400 })); } });
+});
+
+// --- 控制 API 保護(審查 #2):只綁 127.0.0.1;所有改變狀態的請求(非 GET/HEAD/OPTIONS)與 /api/* 都驗 Host,
+// 變更請求另驗 Origin(若有)與 Content-Type(有 body 時必須是 application/json,擋掉 text/plain 的 CSRF)。
+const PORT = +process.argv[2] || 4173;
+const okHosts = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
+const okOrigins = new Set([`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`]);
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+function guard(req, pathname) {
+  const mutating = !SAFE_METHODS.has(req.method);
+  if (!mutating && !pathname.startsWith('/api/')) return null; // 靜態頁不受影響
+  if (!okHosts.has(String(req.headers.host || '').toLowerCase())) return { code: 403, error: 'Host 不合法(只接受 localhost / 127.0.0.1 加上本 server 的 port)' };
+  if (!mutating) return null;
+  if (req.headers.origin !== undefined && !okOrigins.has(req.headers.origin)) return { code: 403, error: 'Origin 不合法(拒絕跨站請求)' };
+  const hasBody = (Number(req.headers['content-length']) > 0) || req.headers['transfer-encoding'] !== undefined;
+  if (hasBody && !/^application\/json\s*(;|$)/i.test(String(req.headers['content-type'] || ''))) return { code: 415, error: 'Content-Type 必須是 application/json' };
+  return null;
+}
 
 // --- 任務衝突防呆:任務可選填 files(逗號分隔的相對路徑/目錄前綴),派工前
 // 檢查是否跟目前「執行中」的其他任務宣告的 files 重疊。比對規則簡單:正規化後
@@ -73,6 +97,8 @@ engine.init(); // 接手上次 server 留下的 running run(needs-you 的 run �
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
+    const denied = guard(req, url.pathname);
+    if (denied) return send(res, denied.code, { error: denied.error });
     if (url.pathname === '/api/config') return send(res, 200, cfg());
     if (url.pathname === '/api/projects' && req.method === 'GET') return send(res, 200, listProjects());
     if (url.pathname === '/api/projects' && req.method === 'POST') {
@@ -93,7 +119,7 @@ http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/tasks' && req.method === 'GET') return send(res, 200, list());
     if (url.pathname === '/api/dispatch' && req.method === 'POST') {
-      const { id, force, noGate } = await readBody(req);
+      const { id, force } = await readBody(req); // 沒有任何關閉核准關卡的參數(舊的 noGate 已移除,傳了也會被忽略)
       if (!/^[\w-]+$/.test(id || '')) return send(res, 400, { error: 'bad id' });
       if (!force) {
         const file = path.join(tasksDir, id + '.md');
@@ -109,12 +135,10 @@ http.createServer(async (req, res) => {
         }
       }
       try {
-        // 任務有 pipeline(或 project 的 defaultPipeline 存在)→ 新引擎;否則走舊的單發派工(相容)
-        if (engine.resolvePipelineId(id)) {
-          const r = engine.startRun(id, { noGate: !!noGate });
-          return send(res, 200, { ...r, engine: true, agent: null, log: null, pid: null });
-        }
-        return send(res, 200, dispatch(id));
+        // 一律走引擎:task.pipeline → project.defaultPipeline → 預設 single(都有 plan + 人工核准關卡)。
+        // 舊的單發派工(tools/dispatch.mjs 的 dispatch())不再從這裡呼叫。
+        const r = engine.startRun(id);
+        return send(res, 200, { ...r, engine: true, agent: null, log: null, pid: null });
       } catch (e) { return send(res, e.status || 400, { error: e.message }); }
     }
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
@@ -125,7 +149,7 @@ http.createServer(async (req, res) => {
       const file = path.join(tasksDir, id + '.md');
       const cur = fs.existsSync(file) ? parse(id + '.md') : { id, title: 'Untitled', status: 'backlog', agent: '', priority: 'p1', body: '\n\n## Log\n' };
       const next = { ...cur };
-      for (const k of ['title', 'status', 'agent', 'priority', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = String(b[k]).replace(/\n/g, ' ');
+      for (const k of ['title', 'status', 'agent', 'priority', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = oneLine(b[k]);
       save(next);
       return send(res, 200, view(parse(id + '.md')));
     }
@@ -207,7 +231,11 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     const f = path.join(root, 'web', url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
-    if (f.startsWith(path.join(root, 'web')) && fs.existsSync(f)) return send(res, 200, fs.readFileSync(f), 'text/html; charset=utf-8');
+    if (f.startsWith(path.join(root, 'web')) && fs.existsSync(f) && fs.statSync(f).isFile()) {
+      const mime = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' }[path.extname(f)] || 'text/html; charset=utf-8';
+      res.writeHead(200, { 'content-type': mime, 'x-content-type-options': 'nosniff' });
+      return res.end(fs.readFileSync(f));
+    }
     send(res, 404, { error: 'not found' });
   } catch (e) { send(res, e.status || 500, { error: e.status ? e.message : String(e) }); }
-}).listen(+process.argv[2] || 4173, () => console.log('workboard on http://localhost:' + (+process.argv[2] || 4173)));
+}).listen(PORT, '127.0.0.1', () => console.log('workboard on http://localhost:' + PORT));

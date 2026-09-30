@@ -132,3 +132,15 @@ test('agy parseLine:只解析已實測事件', () => {
   assert.equal(ok.kind, 'end'); assert.equal(ok.exitCode, 0); assert.equal(ok.text, 'done');
   assert.equal(a.parseLine(JSON.stringify({ event: 'result', result: { status: 'FAILED' } })).exitCode, 1);
 });
+
+test('agy 的 text_delta 事件帶 delta:true(engine 依序串接);claude/codex 的整段訊息不帶,維持「取最後一則」語意', () => {
+  const d1 = registry.agy.parseLine(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: 'a' } }));
+  assert.equal(d1.delta, true);
+  const c = registry.claude.parseLineEvents(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } }));
+  assert.equal(c[0].kind, 'message'); assert.ok(!c[0].delta);
+  const x = registry.codex.parseLineEvents(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }));
+  assert.equal(x[0].kind, 'message'); assert.ok(!x[0].delta);
+  // end 事件的完整文字:claude 的 result.result、agy 的 result.response(engine 優先採用)
+  assert.equal(registry.claude.parseLineEvents(JSON.stringify({ type: 'result', subtype: 'success', result: 'FULL' })).at(-1).text, 'FULL');
+  assert.equal(registry.agy.parseLine(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'FULL' } })).text, 'FULL');
+});

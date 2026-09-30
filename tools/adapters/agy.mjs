@@ -30,7 +30,7 @@ export function parseLineEvents(line) {
       const update = o.step_update;
       if (!update || update.step_type !== 'agent_response') return [];
       return typeof update.text_delta === 'string' && update.text_delta.trim()
-        ? [ev('message', { text: update.text_delta })]
+        ? [ev('message', { text: update.text_delta, delta: true })] // delta:true → engine 依序串接;完整文字以 result.response(end.text)為準
         : [];
     }
 

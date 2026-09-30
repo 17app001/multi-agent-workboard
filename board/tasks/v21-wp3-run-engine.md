@@ -26,3 +26,8 @@ updated: 2026-09-30
 ### 2026-09-30 WP3 完成(sonnet subagent 實作,指揮官複核)
 - 新增 `tools/engine.mjs`、`pipelines/{standard,single}.json`、`tests/engine.test.mjs`(19)、`tests/fixtures/fake-cli.mjs`;改 `tools/server.mjs`(/api/runs/*、/api/pipelines、status 對映)、`tools/dispatch.mjs`(僅 export 兩個函式)。`npm test` 56/56。
 - 已知未涵蓋:.cmd 包裝路徑、重啟後接手 command step、loopTo 回更早 step、併發多 run、posix 分支、真實 CLI execute 模式;plan.md 取「最後一則 message」對真實 CLI 是否完整未驗證(下一步用真實 claude 煙霧測試)。
+
+### 2026-09-30 審查返工(codex 審查 docs/review-codex-1.md → sonnet subagent 修正 → Claude 複核)
+- 修正:核准關卡改為不變式(移除 noGate、validator 強制 execute 前有 human-gate plan、無 pipeline 一律走 single、舊派工路徑不可達)、API 只綁 127.0.0.1 + Host/Origin/Content-Type 檢查、前端 XSS(web/render.js)、agy delta 串接、缺 input 硬失敗、run.json 原子寫入、resolve complete 限制、taskkill execFile、frontmatter CR 注入。
+- 複核:`npm test` 80/80;重啟 server 後用**真實 claude** 再跑一次端到端(single pipeline:plan→待核准→approve→execute),hello.txt 正確修改。
+- 未處理:審查 #9(已寫入 spec)、#10 prompt 信任邊界、#12 agy 已加入 agents.json、command step 仍 shell:true。

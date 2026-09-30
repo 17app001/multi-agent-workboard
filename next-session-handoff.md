@@ -1,24 +1,23 @@
 # Next Session Handoff
 
-**先讀**:`docs/v2.1-spec.md`(權威規格)→ `AGENTS.md` 末段「v2.1 施工接手指南」→ `board/tasks/v21-wp*.md`。
-舊日誌:[docs/worklog-2026-09-30.md](docs/worklog-2026-09-30.md)(v1 完成內容與事故記錄)。
+**先讀**:`docs/v2.1-spec.md`(權威規格,§10 品質/返工規則、§11 審查後修訂)→ `AGENTS.md` 末段「v2.1 施工接手指南」→ `docs/v2.1-施工紀錄與測試方案.md`(含使用者回來後的 9 步測試方案)→ 你要做的 `board/tasks/v21-wp*.md`。
+記憶(專案方向、工作規則、CLI 實測事實)在 `C:\Users\User\.claude\projects\D--MyProject-multi-agent-workboard\memory\`。
 
-## 現況(2026-09-30)
-- v1 功能完整(派工、用量、log viewer、停止、衝突防呆…),`npm test` 12 個測試全過。
-- 已完成 v2.1 規劃:spec + 8 張 WP 任務卡(`board/tasks/v21-wp1~wp8`,目前全在 `backlog`,**尚未開工**)。
-- 動機:v1 是「任務檔管理器」,缺 project 概念(agent 永遠在看板 repo 跑)、缺計畫核准關卡、黑箱、無 agent 間交接。
+## 現況(2026-09-30 收工)
+- **完成**:WP1(project)、WP2(adapters)、WP3(Run 引擎+**人工計畫核准關卡**)、WP9(agy adapter,由 codex-a 經看板派工完成)、codex 獨立審查(`docs/review-codex-1.md`)及其必修項返工。`npm test` 80/80;真實 claude 端到端煙霧測試通過(plan→待核准→approve→execute)。
+- **未開工**:WP4(SSE+Task Detail+**UI 核准按鈕**,建議下一個)、WP5、WP6、WP7、WP8、WP10(選模型)。
+- 已 push 到 `origin/ccr-920812ef-ba9dbz`。看板 server 已用新程式重啟(port 4173)。
 
-## 待使用者決定(開工前,見 spec §9)
-1. D1 確認不換 Python/FastAPI,維持 Node 零依賴。
-2. D2 standard pipeline 的 plan gate 是否永遠開啟(建議是)。
-3. D3 execute 模式權限強度與是否允許跑 shell。
-4. 各 WP 的 owner 是否照建議(WP1-3、7 claude;WP4-5 codex-a;WP6 codex-b;WP8 gemini),確認後把該卡 `status` 改 `todo`。
+## 運作方式(使用者指示,見記憶 user-workflow-rules-v21)
+- Claude 是品質關卡:agent 交出 → Claude 跑 `npm test`、讀 diff、抽查 → 有問題**退回同一個 agent CLI 返工**(寫進任務卡 Log,狀態改回 todo)。
+- 實作/審查優先派 codex-a 與 agy(用看板 `POST /api/dispatch` 或 UI 派工),Claude 只決策/複核/跑測試(codex 沙箱不能 spawn 子行程,跑不了本 repo 測試)。
+- 額度到約 50% 就收工:整理記憶、文檔、push。
 
-## 關鍵路徑
-WP1 → WP2 → WP3(做完即達成「先計畫、核准後才執行」與「不黑箱」),WP4 起是體驗層。
-
-## 其他待辦/風險
-- README 沒有截圖(瀏覽器擴充套件先前沒連上)。
-- `board/tasks/task-mun9zamd.md`(測試agent多協作模式)是空白任務,沒規格,留著或刪。
-- 兩個本機 server(4173 看板、4174 todoapp)可能還在跑,改 `tools/` 後要重啟。
-- 尚無測試涵蓋:派工衝突 409、停止行程。
+## 待使用者決定 / 已知風險
+1. D3:execute 權限強度與 command step 是否改 `{command,args}`+`shell:false`(審查 #8)。
+2. 審查 #10:prompt 信任邊界、核准計畫 hash 與 diff 範圍檢查(WP6 後做)。
+3. **UI 目前無核准按鈕**:核准/退回要用 API(`POST /api/runs/<id>/approve|reject`),WP4 才補。
+4. agy 尚未實際派工過(adapter 只用假輸出+一次 plan 實測);codex/agy 的 execute 模式未實跑。gemini CLI 帳號不可用。
+5. agy 用量統計未做(用量卡為空)。
+6. `board/tasks/task-mun9zamd.md`(空白任務)未進版控,留著或刪。README 仍無截圖。
+7. 前端 WP1 畫面跑版已修 CSS,使用者尚未確認。

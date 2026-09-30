@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, exec, execSync } from 'node:child_process';
+import { spawn, execFile, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,7 +46,7 @@ loadState();
 // 問 OS 這個 pid 是否還存在(不看記憶體狀態,直接查行程表,server 重啟後
 // 靠這個分辨「真的還在跑」跟「其實已經結束但沒人記錄到」)。
 export function isPidRunning(pid) {
-  if (!pid) return false;
+  if (!Number.isInteger(pid) || pid <= 0) return false; // pid 來自 state.json/run.json,不信任型別(也避免插進 shell 指令)
   if (process.platform === 'win32') {
     try {
       // 不能用「找不到」訊息的英文字串比對(這台機器 Windows 語系是中文,
@@ -190,8 +190,9 @@ export function stopRun(id) {
   if (!run || !run.pid) return Promise.resolve({ ok: false, error: '找不到這個任務目前的執行紀錄(可能是 server 重啟後遺失,或本來就沒在跑)' });
   refreshRunStatus(run); // server 重啟後 run 是從 state.json 讀回來的,先當場核對一次 pid 是否還存在
   if (run.status !== 'running') return Promise.resolve({ ok: false, error: '行程已經結束(狀態: ' + run.status + ')' });
+  if (!Number.isInteger(run.pid) || run.pid <= 0) return Promise.resolve({ ok: false, error: '不合法的 pid(需為正整數),不執行 taskkill' });
   return new Promise(resolve => {
-    exec(`taskkill /pid ${run.pid} /T /F`, (err, stdout, stderr) => {
+    execFile('taskkill', ['/pid', String(run.pid), '/T', '/F'], { windowsHide: true }, (err, stdout, stderr) => {
       if (err) { resolve({ ok: false, error: (stderr || err.message || '').trim() || 'taskkill 失敗' }); return; }
       run.status = 'stopped';
       run.endedAt = Date.now();

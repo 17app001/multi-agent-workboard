@@ -118,7 +118,7 @@ export function collectUsage(agents) {
     const enabled = a.enabled !== false;
     const home = expand(a.home);
     const homeExists = enabled && fs.existsSync(home);
-    const byDay = homeExists ? parsers[a.type](home) : null;
+    const byDay = homeExists ? (parsers[a.type] ? parsers[a.type](home) : {}) : null; // 尚無用量解析器的 type(如 agy):視為有設定但無資料,不丟例外
     const days = Object.entries(byDay || {}).sort().map(([date, v]) => ({ date, ...v, total: v.input + v.cached + v.output }));
     const sum = k => days.reduce((s, d) => s + d[k], 0);
     const pr = a.price || {};

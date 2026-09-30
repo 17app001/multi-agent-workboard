@@ -3,11 +3,13 @@
 //
 // Run 目錄(spec §4.5):board/runs/<taskId>/<runId>/{run.json, events.jsonl, artifacts/, raw/<stepId>.log}
 // 安全不變式(human gate):有 gate:'human' 的 step 完成後 step.status='awaiting-approval'、run.status='needs-you';
+// 不變式(審查 #1):任何 execute step 之前必須有 gate:'human' 的 plan step(validatePipeline 載入時強制,
+//   assertGatesCleared 執行時再驗一次);沒有任何「關閉核准關卡」的開關。
 //   只有 approve() 會把它改成 'done' 並前進 cursor。drive() 每次啟動 step 前都會 assertGatesCleared(),
 //   任何前置 gate 未核准就丟例外,不會 spawn 任何行程。
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, exec } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getAdapter } from './adapters/index.mjs';
 import { MODES } from './adapters/_util.mjs';
@@ -47,6 +49,7 @@ export function validatePipeline(def, agents = []) {
     }
   });
   const agentIds = new Map(agents.map(a => [a.id, a]));
+  const produced = new Set(); // 更早的 step 已宣告會產出的 artifact 檔名
   def.steps.forEach((s, i) => {
     if (!s || typeof s !== 'object' || Array.isArray(s)) { err(`steps[${i}] 必須是物件`); return; }
     if (typeof s.id !== 'string' || !ID_RE.test(s.id)) { err(`steps[${i}] 缺少 id,或 id 不合法`); return; }
@@ -65,7 +68,17 @@ export function validatePipeline(def, agents = []) {
       if (!MODES.includes(s.mode)) err(`${L}: mode 必須是 ${MODES.join('|')}(目前: ${JSON.stringify(s.mode)})`);
     }
     if (s.input !== undefined && !(Array.isArray(s.input) && s.input.every(safeName))) err(`${L}: input 必須是 artifact 檔名陣列(只允許 [\\w.-]+)`);
+    else if (Array.isArray(s.input)) {
+      for (const n of s.input) if (!produced.has(n)) err(`${L}: input "${n}" 不是任何「更早的 step」的 output(缺少產出者,執行時會缺檔)`);
+    }
     if (s.output !== undefined && !safeName(s.output)) err(`${L}: output 不是合法檔名(只允許 [\\w.-]+)`);
+    else if (typeof s.output === 'string') produced.add(s.output);
+    else if (type === 'command') produced.add(s.id + '.txt'); // command step 未宣告 output 時的預設檔名
+    // 不變式:execute step 之前必須有「無條件、gate:'human' 的 plan step」(when 會讓它被略過,所以不准帶 when)
+    if (type === 'agent' && s.mode === 'execute') {
+      const guarded = def.steps.slice(0, i).some(p => p && p.mode === 'plan' && (p.type === undefined || p.type === 'agent') && p.gate === 'human' && p.when === undefined);
+      if (!guarded) err(`${L}: execute 模式的 step 之前必須有一個 gate:"human" 的 plan step(且不可帶 when),否則可繞過人工核准`);
+    }
     if (s.gate !== undefined && s.gate !== 'human') err(`${L}: gate 目前只支援 "human"`);
     if (s.timeoutMs !== undefined && !(Number.isFinite(s.timeoutMs) && s.timeoutMs > 0)) err(`${L}: timeoutMs 需為正數`);
     if (s.when !== undefined) {
@@ -92,7 +105,7 @@ export function loadPipeline(id, agents = loadAgents()) {
   const v = validatePipeline(def, agents);
   if (def && def.id !== id) v.errors.push(`檔名是 ${id}.json 但 id 是 ${JSON.stringify(def.id)}`);
   if (v.errors.length) throw bad(`pipeline「${id}」驗證失敗: ` + v.errors.join(';'));
-  return { ...def, maxRevisions: def.maxRevisions ?? 3, allowNoGate: !!def.allowNoGate };
+  return { ...def, maxRevisions: def.maxRevisions ?? 3 };
 }
 
 export function listPipelines() {
@@ -124,28 +137,53 @@ function setTaskStatus(taskId, status, note) {
     raw = raw.replace(/^updated:.*$/m, 'updated: ' + new Date().toISOString().slice(0, 10));
     if (note) raw += `\n- ${note}\n`;
     fs.writeFileSync(file, raw);
-  } catch { /* 任務檔不存在(例如已被刪除)不影響 run */ }
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return; // 任務檔不存在(例如已被刪除)不影響 run
+    console.error(`[engine] 寫入任務檔狀態失敗(${taskId}): ${e.message}`);
+  }
 }
 
-// 這張任務(+其 project)該走哪個 pipeline;null = 走舊的單發派工。
-// 規則:任務明確寫了 pipeline → 用它(檔案不存在會在 startRun 報錯,不悄悄退回舊路徑);
-//       否則 project.defaultPipeline 存在「而且 pipelines/ 裡真的有這個檔」才用,否則舊路徑。
+// 這張任務(+其 project)該走哪個 pipeline。解析順序:task.pipeline → project.defaultPipeline → 一律 'single'。
+// 舊的單發派工(無 plan/gate)在 server 已不可達;明確指定(task 或 project)卻不存在的 pipeline 直接 400,不悄悄退回。
 export function resolvePipelineId(taskId) {
   const task = readTask(taskId);
   if (!task) return null;
-  if (task.pipeline) return task.pipeline;
+  if (task.pipeline) {
+    if (!pipelineExists(task.pipeline)) throw bad(`任務指定的 pipeline「${task.pipeline}」不存在(pipelines/${task.pipeline}.json 找不到)`);
+    return task.pipeline;
+  }
   if (task.project) {
     const p = getProject(task.project);
-    if (p && p.defaultPipeline && pipelineExists(p.defaultPipeline)) return p.defaultPipeline;
+    if (p && p.defaultPipeline) {
+      if (!pipelineExists(p.defaultPipeline)) throw bad(`專案「${task.project}」的 defaultPipeline「${p.defaultPipeline}」不存在(pipelines/${p.defaultPipeline}.json 找不到),請修正專案設定`);
+      return p.defaultPipeline;
+    }
   }
-  return null;
+  return 'single';
 }
 
 // ---------------------------------------------------------------- run 檔案
 const runPath = (taskId, runId, ...rest) => path.join(runsDir, taskId, runId, ...rest);
 const RUNID_RE = /^run-\d+$/;
-function saveRun(run) {
-  try { fs.writeFileSync(runPath(run.taskId, run.runId, 'run.json'), JSON.stringify(run, null, 2)); } catch { /* 落地失敗不中斷 */ }
+// 原子寫入:同目錄暫存檔 + rename。strict=true 失敗時丟例外(startRun 初始寫入用);否則記到 console 並在 run.persistError 標記。
+function writeFileAtomic(file, data) {
+  const tmp = file + '.tmp-' + process.pid;
+  try {
+    fs.writeFileSync(tmp, data);
+    let lastErr;
+    for (let i = 0; i < 4; i++) { // Windows 上 rename 覆蓋偶爾因防毒/讀取中而 EPERM/EBUSY,短暫重試
+      try { fs.renameSync(tmp, file); return; } catch (e) { lastErr = e; if (!/^(EPERM|EBUSY|EACCES)$/.test(e.code)) break; }
+    }
+    throw lastErr;
+  } catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } throw e; }
+}
+function saveRun(run, { strict = false } = {}) {
+  try { writeFileAtomic(runPath(run.taskId, run.runId, 'run.json'), JSON.stringify(run, null, 2)); }
+  catch (e) {
+    if (strict) throw e;
+    run.persistError = `run.json: ${e.message}`;
+    console.error(`[engine] run.json 寫入失敗(${run.taskId}/${run.runId}): ${e.message}`);
+  }
 }
 function listRunIds(taskId) {
   if (!ID_RE.test(taskId)) return [];
@@ -158,7 +196,11 @@ function loadRunFile(taskId, runId) {
 function emit(ctxOrRun, e) {
   const run = ctxOrRun.run || ctxOrRun;
   const line = JSON.stringify({ ts: now(), ...e, runId: run.runId });
-  try { fs.appendFileSync(runPath(run.taskId, run.runId, 'events.jsonl'), line + '\n'); } catch { /* ignore */ }
+  try { fs.appendFileSync(runPath(run.taskId, run.runId, 'events.jsonl'), line + '\n'); }
+  catch (e) {
+    run.persistError = `events.jsonl: ${e.message}`;
+    console.error(`[engine] events.jsonl 寫入失敗(${run.taskId}/${run.runId}): ${e.message}`);
+  }
 }
 const engineEv = (ctx, step, kind, text, extra = {}) => emit(ctx, { kind, step, text, engine: true, ...extra });
 
@@ -186,17 +228,15 @@ export function hasActiveRun(taskId) { const r = getLatestRun(taskId); return is
 function currentAgent(run) { const s = run.steps.find(x => x.status === 'running') || run.steps[Math.min(run.cursor, run.steps.length - 1)]; return s?.agent || null; }
 
 // ---------------------------------------------------------------- 建立 run
-export function startRun(taskId, { noGate = false } = {}) {
+export function startRun(taskId) {
   if (!ID_RE.test(taskId || '')) throw bad('bad id');
   const task = readTask(taskId);
   if (!task) throw bad('找不到任務 ' + taskId);
   const cur = getLatestRun(taskId);
   if (isActive(cur)) throw bad(`任務 ${taskId} 已有進行中的 run(${cur.runId},狀態 ${cur.status}),同一任務同時只能有一個 active run`, 409);
   const pid = resolvePipelineId(taskId);
-  if (!pid) throw bad('這張任務沒有指定 pipeline');
   const agents = loadAgents();
   const def = loadPipeline(pid, agents);
-  if (noGate && !def.allowNoGate) throw bad(`pipeline「${pid}」不允許關閉人工核准關卡(noGate)`);
 
   let cwd = root;
   if (task.project) {
@@ -221,15 +261,21 @@ export function startRun(taskId, { noGate = false } = {}) {
   const runId = 'run-' + now();
   const run = {
     runId, taskId, pipeline: pid, pipelineDef: def, status: 'running', needsYou: null, cursor: 0, revisions: 0,
-    noGate: !!noGate, cwd, projectId: task.project || null, startedAt: now(), endedAt: null,
+    cwd, projectId: task.project || null, startedAt: now(), endedAt: null,
     lastCommandFailed: false, approvalNotes: [], feedback: {}, error: null, steps,
   };
-  fs.mkdirSync(runPath(taskId, runId, 'artifacts'), { recursive: true });
-  fs.mkdirSync(runPath(taskId, runId, 'raw'), { recursive: true });
-  saveRun(run);
+  // 初始落地失敗 → 中止(不 spawn、不建 ctx、不動任務狀態),並清掉這次剛建立的 run 目錄
+  try {
+    fs.mkdirSync(runPath(taskId, runId, 'artifacts'), { recursive: true });
+    fs.mkdirSync(runPath(taskId, runId, 'raw'), { recursive: true });
+    saveRun(run, { strict: true });
+  } catch (e) {
+    try { fs.rmSync(runPath(taskId, runId), { recursive: true, force: true }); } catch { /* ignore */ }
+    throw bad(`無法建立 run 記錄(run.json 寫入失敗),已中止且未啟動任何 agent: ${e.message}`, 500);
+  }
   const ctx = makeCtx(run);
   setTaskStatus(taskId, 'running');
-  engineEv(ctx, null, 'start', `run ${runId} 開始(pipeline ${pid}${noGate ? ',noGate' : ''})`);
+  engineEv(ctx, null, 'start', `run ${runId} 開始(pipeline ${pid})`);
   setImmediate(() => drive(ctx));
   return { runId, pipeline: pid, status: run.status, steps: steps.map(s => s.id) };
 }
@@ -244,8 +290,13 @@ function evalWhen(run, when) {
   const failed = s.status === 'failed' || s.verdict === 'FAIL';
   return m[2] === 'failed' ? failed : (s.status === 'done' && !failed);
 }
-const gateActive = (run, def) => def.gate === 'human' && !run.noGate;
+const gateActive = (run, def) => def.gate === 'human';
 function assertGatesCleared(run, idx) {
+  // 執行期再驗一次不變式(run.json 可能來自舊版/被手改):execute step 之前必須有已核准(done)的 human-gate plan step
+  if (run.pipelineDef.steps[idx].mode === 'execute' && (run.pipelineDef.steps[idx].type || 'agent') === 'agent') {
+    const ok = run.pipelineDef.steps.some((d, i) => i < idx && d.mode === 'plan' && d.gate === 'human' && run.steps[i].status === 'done');
+    if (!ok) throw new Error(`gate 違規:execute step「${run.pipelineDef.steps[idx].id}」之前沒有已核准的 human-gate plan step,拒絕啟動`);
+  }
   for (let i = 0; i < idx; i++) {
     const d = run.pipelineDef.steps[i], s = run.steps[i];
     if (gateActive(run, d) && s.status !== 'done' && s.status !== 'skipped') {
@@ -304,6 +355,16 @@ async function driveLoop(ctx) {
     assertGatesCleared(run, idx);
 
     const resume = st.status === 'running';
+    if (!resume) { // 宣告的 input artifact 缺檔 → 硬失敗進 needs-you,不帶「(尚未產生)」硬跑
+      const missing = (def.input || []).filter(n => !fs.existsSync(runPath(run.taskId, run.runId, 'artifacts', n)));
+      if (missing.length) {
+        st.status = 'failed'; st.endedAt = now(); st.error = `缺少 input artifact: ${missing.join(', ')}`;
+        saveRun(run);
+        engineEv(ctx, def.id, 'error', st.error);
+        toNeedsYou(ctx, 'missing-input', `step「${def.id}」需要的 input artifact 不存在: ${missing.join(', ')}(上一步沒產出或檔案遺失)。可 retry 或 abort`, def.id);
+        return;
+      }
+    }
     const out = def.type === 'command' || st.type === 'command' ? await runCommandStep(ctx, idx, resume) : await runAgentStep(ctx, idx, resume);
     if (ctx.stopping) {
       st.status = 'stopped'; st.endedAt = now(); ctx.stopping = false; saveRun(run);
@@ -357,9 +418,9 @@ async function driveLoop(ctx) {
 // ---------------------------------------------------------------- 行程等待(agent 與 command 共用)
 export function killTree(pid) {
   return new Promise(resolve => {
-    if (!pid) return resolve({ ok: false, error: '沒有 pid' });
+    if (!Number.isInteger(pid) || pid <= 0) return resolve({ ok: false, error: `不合法的 pid: ${JSON.stringify(pid)}(需為正整數),不執行` });
     if (process.platform === 'win32') {
-      exec(`taskkill /pid ${pid} /T /F`, { windowsHide: true }, (err, so, se) => {
+      execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, (err, so, se) => {
         if (err && isPidRunning(pid)) resolve({ ok: false, error: (se || err.message || '').trim() || 'taskkill 失敗' });
         else resolve({ ok: true }); // 不比對輸出文字(中文系統);行程已不在也視為成功
       });
@@ -447,7 +508,9 @@ function tailRaw(ctx, st, def, adapter, rawFile, flush) {
   saveRun(ctx.run);
 }
 function analyzeRaw(adapter, rawFile, from) {
-  const r = { lastMessage: null, endText: null, needsHuman: [], endExit: null };
+  // deltaText:標記 delta 的串流片段(agy 的 text_delta)依序串接;整段訊息(claude/codex)維持「取最後一則」語意,
+  // 因為它們的中間訊息(工具呼叫前的旁白)不屬於最終回覆,串接會污染 plan.md/review.md 的內容與 VERDICT 首行。
+  const r = { lastMessage: null, endText: null, deltaText: '', needsHuman: [], endExit: null };
   let text = '';
   try { const b = fs.readFileSync(rawFile); text = b.subarray(from || 0).toString('utf8'); } catch { return r; }
   for (const line of text.split('\n')) {
@@ -455,11 +518,12 @@ function analyzeRaw(adapter, rawFile, from) {
     let evs = [];
     try { evs = adapter.parseLineEvents(line.replace(/\r$/, '')) || []; } catch { evs = []; }
     for (const e of evs) {
-      if (e.kind === 'message' && e.text) r.lastMessage = e.text;
+      if (e.kind === 'message' && e.text) { if (e.delta) r.deltaText += e.text; else r.lastMessage = e.text; }
       if (e.kind === 'end') { r.endExit = e.exitCode ?? null; if (typeof e.text === 'string' && e.text) r.endText = e.text; }
       if (e.needsHuman) r.needsHuman.push(e.text || '');
     }
   }
+  r.finalText = r.endText || r.deltaText || r.lastMessage || null; // 優先 end 事件的完整文字,其次串接的 delta,最後才是最後一則整段訊息
   return r;
 }
 export function parseVerdict(text) {
@@ -519,7 +583,7 @@ async function runAgentStep(ctx, idx, resume) {
   if (code !== 0) return { kind: 'failed', message: `agent 結束碼 ${code === null ? '未知' : code}` };
   const out = { kind: 'done' };
   if (def.output) {
-    const text = an.lastMessage || an.endText;
+    const text = an.finalText;
     if (!text) return { kind: 'failed', message: `agent 沒有產生可存成 ${def.output} 的回覆文字` };
     fs.writeFileSync(runPath(run.taskId, run.runId, 'artifacts', def.output), text);
     engineEv(ctx, def.id, 'message', `已存 artifact ${def.output}(${text.length} 字元)`, { phase: 'artifact', file: def.output });
@@ -529,7 +593,7 @@ async function runAgentStep(ctx, idx, resume) {
       else engineEv(ctx, def.id, 'message', `審查結論 ${out.verdict}`, { phase: 'verdict', verdict: out.verdict });
     }
   } else if (def.mode === 'review') {
-    out.verdict = parseVerdict(an.lastMessage || an.endText);
+    out.verdict = parseVerdict(an.finalText);
     if (!out.verdict) { out.verdict = 'FAIL'; engineEv(ctx, def.id, 'error', '審查回覆首行解析不到 VERDICT,視為 FAIL'); }
   }
   return out;
@@ -662,7 +726,14 @@ export function resolveRun(taskId, action) {
     setTaskStatus(taskId, 'running', `使用者選擇再試一次 (${new Date().toISOString()})`);
     drive(ctx);
   } else if (action === 'complete') {
-    finishRun(ctx, 'completed', '使用者選擇忽略問題並完成');
+    if (run.needsYou.reason !== 'revision-limit') throw bad(`「${run.needsYou.reason}」類的問題不能強制完成(會把沒成功的 step 當成功);請用 retry 或 abort`, 409);
+    const st = run.steps[run.cursor];
+    if (st && st.status !== 'done' && st.status !== 'skipped') {
+      const was = st.status;
+      st.status = 'waived'; st.endedAt = st.endedAt || now(); st.waivedAt = now();
+      engineEv(ctx, st.id, 'message', `force-complete:step「${st.id}」(原狀態 ${was})被使用者豁免(waived),run 強制完成`, { phase: 'force-complete', reason: run.needsYou.reason });
+    }
+    finishRun(ctx, 'completed', '使用者選擇忽略問題並強制完成(force-complete)');
   } else if (action === 'abort') {
     finishRun(ctx, 'cancelled', '使用者選擇中止');
   } else throw bad("action 必須是 'retry' | 'complete' | 'abort'");
