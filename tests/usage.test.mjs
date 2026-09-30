@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { collectUsage, usageInRange } from '../tools/usage.mjs';
+import { collectUsage, usageInRange, usageForRun, collectRunAnalytics } from '../tools/usage.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'usage-test-'));
 const write = (file, lines) => {
@@ -37,6 +37,51 @@ test('claude: 加總 input(含 cache_creation)/cached/output,並以 message.id+r
   assert.equal(r.days[0].date, ymd(2026, 1, 15));
   // (16*1 + 100*0.1 + 22*2) / 1e6
   assert.ok(Math.abs(r.costTotal - 70 / 1e6) < 1e-12);
+});
+
+test('agy run raw stream-json attributes only final result usage to its step', () => {
+  const root = tmp(), at = noon(2026, 5, 3).toISOString();
+  const run = { taskId: 'task-a', runId: 'run-1', steps: [{ id: 'execute', agent: 'agy', startedAt: at, endedAt: at }] };
+  write(path.join(root, 'task-a', 'run-1', 'raw', 'execute.log'), ['not json', { type: 'result', usage: { input_tokens: 4, output_tokens: 3 } }, { type: 'result', result: { usage: { input_tokens: 10, cache_read_tokens: 5, output_tokens: 7 } } }]);
+  const agents = [{ id: 'agy', type: 'agy', price: { input: 1, cached: 2, output: 3 } }];
+  const enriched = usageForRun(run, agents, root);
+  assert.equal(enriched.usage.available, true);
+  assert.equal(enriched.usage.input, 10);
+  assert.equal(enriched.usage.cached, 5);
+  assert.equal(enriched.usage.output, 7);
+  assert.equal(enriched.usage.costEstimate, 41 / 1e6);
+  write(path.join(root, 'task-a', 'run-1', 'run.json'), [run]);
+  const legacy = collectUsage(agents, root)[0];
+  assert.equal(legacy.found, true);
+  assert.equal(legacy.total, 22);
+});
+
+test('agy 真實輸出格式({"event":"result"})的用量能被解析(用真實樣本 fixture)', () => {
+  // 曾經解析器只認 type/kind === 'result',對真實 agy 輸出永遠讀不到,而合成資料的測試沒抓到。
+  const root = tmp(), at = noon(2026, 5, 4).toISOString();
+  const run = { taskId: 'task-real', runId: 'run-1', steps: [{ id: 'plan', agent: 'agy', startedAt: at, endedAt: at }] };
+  const realSample = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), 'fixtures', 'agy-plan-sample.jsonl'), 'utf8');
+  fs.mkdirSync(path.join(root, 'task-real', 'run-1', 'raw'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'task-real', 'run-1', 'raw', 'plan.log'), realSample);
+  const agents = [{ id: 'agy', type: 'agy', price: { input: 1, cached: 0, output: 1 } }];
+  const enriched = usageForRun(run, agents, root);
+  assert.equal(enriched.usage.available, true, '真實 agy 樣本必須解析得到用量');
+  assert.equal(enriched.usage.input, 12476);
+  assert.equal(enriched.usage.output, 332);
+});
+
+test('run analytics uses local time ranges and keeps empty windows unavailable', () => {
+  const root = tmp(), at = noon(2026, 6, 2).toISOString();
+  const run = { taskId: 'task-a', runId: 'run-1', steps: [{ id: 'execute', agent: 'agy', startedAt: at, endedAt: at }] };
+  write(path.join(root, 'task-a', 'run-1', 'run.json'), [run]);
+  write(path.join(root, 'task-a', 'run-1', 'raw', 'execute.log'), [{ type: 'result', usage: { input_tokens: 2, output_tokens: 3 } }]);
+  const agents = [{ id: 'agy', type: 'agy', price: { input: 1, output: 1 } }];
+  const data = collectRunAnalytics(root, agents, noon(2026, 6, 2));
+  assert.equal(data.today.total, 5);
+  assert.equal(data.month.agents[0].id, 'agy');
+  assert.equal(data.topTasks[0].taskId, 'task-a');
+  const future = collectRunAnalytics(root, agents, noon(2026, 7, 2));
+  assert.equal(future.today.available, false);
 });
 
 test('codex: 取每檔最後一筆累計值;cached 從 input 扣除;reasoning 不重複計入 output', () => {

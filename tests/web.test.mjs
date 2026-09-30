@@ -14,7 +14,7 @@ const indexSrc = fs.readFileSync(path.join(repo, 'web/index.html'), 'utf8');
 const detailSrc = fs.readFileSync(path.join(repo, 'web/detail.js'), 'utf8');
 
 const ctx = vm.createContext({});
-vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml, decomposeDraftTableHtml };', ctx);
+vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, analyticsHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml, decomposeDraftTableHtml };', ctx);
 const R = ctx.api;
 const detailCtx = vm.createContext({ Date, Object });
 vm.runInContext(detailSrc + '\n;this.api = { detailHtml, detailEsc };', detailCtx);
@@ -48,6 +48,13 @@ const assertSafe = (html, what) => {
 const cfg = { columns: ['todo', EVIL], agents: [{ id: 'a1', label: EVIL }, { id: EVIL, label: 'ok' }] };
 const evilTask = { id: EVIL, title: EVIL, status: 'todo', agent: 'a1', priority: EVIL, project: EVIL, goal: EVIL, files: EVIL };
 const evilProject = { id: EVIL, name: EVIL, path: EVIL, valid: false, error: EVIL };
+
+test('analytics and task usage renderers escape untrusted API fields', () => {
+  const analytics = R.analyticsHtml({ month: { available: true, total: EVIL, agents: [{ id: EVIL, total: EVIL }] }, topTasks: [{ taskId: EVIL, total: EVIL, costEstimate: EVIL }] });
+  assertSafe(analytics, 'analytics');
+  const detail = D.detailHtml({ run: { steps: [{ id: EVIL, status: 'done', agent: EVIL, usage: { available: true, input: EVIL, cached: EVIL, output: EVIL, total: EVIL, costEstimate: EVIL } }], usage: { available: true, total: EVIL, input: EVIL, cached: EVIL, output: EVIL, costEstimate: EVIL } } }, evilTask);
+  assertSafe(detail, 'detail usage');
+});
 
 test('esc:跳脫 & < > " \'', () => {
   assert.equal(R.esc(`<a href="x" onclick='y'>&</a>`), '&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;');

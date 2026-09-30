@@ -88,6 +88,20 @@ test('/api/config 與 /api/usage 可回應', async () => {
 });
 
 // ------------------------------------------------------------------ 審查 #2:控制 API 保護
+test('run detail and analytics expose agy raw usage without reading its home log', async () => {
+  const taskId = 'usage-run', runId = 'run-1', runDir = path.join(sandbox, 'board/runs', taskId, runId);
+  const at = new Date().toISOString();
+  fs.mkdirSync(path.join(runDir, 'raw'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ taskId, runId, status: 'completed', steps: [{ id: 'execute', agent: 'agy', status: 'completed', startedAt: at, endedAt: at }] }));
+  fs.writeFileSync(path.join(runDir, 'raw', 'execute.log'), ['not json', JSON.stringify({ type: 'result', usage: { input_tokens: 12, cache_read_tokens: 4, output_tokens: 6 } })].join('\n'));
+  const detail = await api('/api/runs/' + taskId);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.json.run.usage.total, 22);
+  assert.equal(detail.json.run.steps[0].usage.source, 'agy raw stream-json');
+  const analytics = await api('/api/analytics');
+  assert.ok(analytics.json.topTasks.some(t => t.taskId === taskId));
+});
+
 const port = () => new URL(base).port;
 const rawReq = (method, p, { headers = {}, body } = {}) => new Promise((ok, no) => {
   const req = http.request({ host: '127.0.0.1', port: port(), path: p, method, headers }, res => {

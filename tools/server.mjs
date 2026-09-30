@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { collectUsage, usageInRange } from './usage.mjs';
+import { collectUsage, usageInRange, usageForRun, collectRunAnalytics } from './usage.mjs';
 import { readCodexQuota } from './quota.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 import * as engine from './engine.mjs';
@@ -14,6 +14,7 @@ import { parseDecomposition, createTasksFromDraft, parseDependsOn, findUnfinishe
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
 const projectsDir = path.join(root, 'board/projects');
+const runsDir = path.join(root, 'board/runs');
 const cfg = () => JSON.parse(fs.readFileSync(path.join(root, 'agents.json'), 'utf8'));
 const MODEL_RE = /^[\w.:-]+$/;
 const declaredModels = agent => (Array.isArray(agent?.models) ? agent.models : []).map(m => typeof m === 'string' ? { id: m, label: m } : m).filter(m => m && MODEL_RE.test(String(m.id)));
@@ -330,7 +331,8 @@ http.createServer(async (req, res) => {
     }
 
 
-    if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
+    if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents, runsDir));
+    if (url.pathname === '/api/analytics' && req.method === 'GET') return send(res, 200, collectRunAnalytics(runsDir, cfg().agents));
     if (url.pathname === '/api/quota' && req.method === 'GET') {
       const agents = Array.isArray(cfg().agents) ? cfg().agents : [];
       return send(res, 200, agents.filter(a => a?.type === 'codex' && a.enabled !== false)
@@ -477,6 +479,7 @@ http.createServer(async (req, res) => {
       if (sub === 'stream' && !name && req.method === 'GET') return streamRun(req, res, taskId, url);
       if (!sub && req.method === 'GET') {
         const d = engine.runDetail(taskId);
+        if (d) return send(res, 200, { ...d, run: usageForRun(d.run, cfg().agents, runsDir) });
         return d ? send(res, 200, d) : send(res, 404, { error: '這個任務沒有 run' });
       }
       if (sub === 'artifacts' && name && req.method === 'GET') return send(res, 200, engine.readArtifactFile(taskId, name), 'text/plain; charset=utf-8');

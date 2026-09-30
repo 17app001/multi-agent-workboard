@@ -48,6 +48,7 @@ function usageCardHtml(a) {
 }
 
 function usageSummaryHtml(usageList = []) {
+  if (!Array.isArray(usageList)) return analyticsHtml(usageList || {});
   let todayTokens = 0, costToday = 0;
   for (const u of usageList) {
     if (u && u.found) {
@@ -56,6 +57,15 @@ function usageSummaryHtml(usageList = []) {
     }
   }
   return `<div class="usage-summary-bar"><span>📊 <b>今日用量:</b> ${esc(fmt(todayTokens))} tokens · 約 $${esc(costToday.toFixed(2))} (API 估算)</span><button class=iconbtn data-view="analytics">查看詳細用量 →</button></div>`;
+}
+
+function analyticsHtml(data = {}) {
+  const summary = (label, value = {}) => `<article class=card analytics-card><b>${esc(label)}</b><div class=big>${value.available ? esc(fmt(num(value.total))) : '無資料'}</div>${value.available ? `<div class=mut>in ${esc(fmt(num(value.input)))} · cache ${esc(fmt(num(value.cached)))} · out ${esc(fmt(num(value.output)))}</div><div class=mut>約 $${esc(num(value.costEstimate).toFixed(4))}</div>` : '<div class=mut>尚無可解析的 task run 用量</div>'}</article>`;
+  const agents = [...(data.month?.agents || [])];
+  const max = Math.max(1, ...agents.map(a => num(a.total)));
+  const distribution = agents.length ? agents.map(a => `<div class=analytics-row><span>${esc(a.id)}</span><i style="width:${esc((num(a.total) / max * 100).toFixed(1))}%"></i><b>${esc(fmt(num(a.total)))}</b></div>`).join('') : '<p class=mut>無資料</p>';
+  const top = Array.isArray(data.topTasks) && data.topTasks.length ? data.topTasks.map(t => `<li><span>${esc(t.taskId)}</span><b>${esc(fmt(num(t.total)))} tokens · $${esc(num(t.costEstimate).toFixed(4))}</b></li>`).join('') : '<li class=mut>無資料</li>';
+  return `<section class=analytics><div class=analytics-summary>${summary('今日', data.today)}${summary('近 7 天', data.week)}${summary('本月', data.month)}</div><p class=mut>所有費用均為 API 等值估算，非實際扣費。</p><div class=analytics-grid><section class=card><h3>依 Agent 分布（本月）</h3>${distribution}</section><section class=card><h3>用量最高前五任務</h3><ol class=analytics-top>${top}</ol></section></div></section>`;
 }
 
 function badgeHtml(t, runStatus) {

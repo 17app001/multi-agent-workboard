@@ -26,6 +26,10 @@ const todayLocal = () => day(new Date());
 const empty = () => ({ input: 0, output: 0, cached: 0, total: 0 });
 // price = {input,cached,output}(每 1M tokens 美金,估算用),跟 collectUsage 的每日費用估算共用同一條公式。
 const costOf = (pr, d) => ((d.input * (pr.input || 0)) + (d.cached * (pr.cached || 0)) + (d.output * (pr.output || 0))) / 1e6;
+const usageResult = (values = {}, available = true, source = null) => {
+  const input = Number(values.input) || 0, cached = Number(values.cached) || 0, output = Number(values.output) || 0;
+  return { input, cached, output, total: input + cached + output, costEstimate: Number(values.costEstimate) || 0, available, source };
+};
 
 // --- 掃描層:每種 agent 類型各自負責「找出本機 log 裡帶時間戳記的原始用量條目」,
 // 回傳 [{ts, input, cached, output}, ...],不做任何依日期/時間範圍的聚合。
@@ -111,8 +115,17 @@ const parsers = Object.fromEntries(
   Object.entries(entryParsers).map(([type, fn]) => [type, home => byDayFromEntries(fn(home))])
 );
 
-export function collectUsage(agents) {
+export function collectUsage(agents, runsRoot = '') {
   return agents.map(a => {
+    // agy has no trusted home-log format.  Its aggregate is instead derived
+    // from persisted workboard raw logs when the caller supplies runsRoot.
+    if (a.type === 'agy' && runsRoot) {
+      const aggregate = collectRunAnalytics(runsRoot, [a]);
+      const { all, today, week } = aggregate;
+      return { id: a.id, label: a.label, type: a.type, found: all.available, enabled: a.enabled !== false, configured: true,
+        today: today.total, week: week.total, costToday: today.costEstimate, costWeek: week.costEstimate,
+        costTotal: all.costEstimate, total: all.total, input: all.input, cached: all.cached, output: all.output, days: [] };
+    }
     // enabled:false = 使用者主動停用這個 agent(例如 home 目錄還沒建立/不打算用),
     // 不嘗試解析、也不當成錯誤。home 目錄不存在(未設定)本身也不是錯誤,一樣回傳 found:false。
     const enabled = a.enabled !== false;
@@ -163,4 +176,98 @@ export function usageInRange(agent, fromMs, toMs) {
   sum.total = sum.input + sum.cached + sum.output;
   sum.costEstimate = costOf(agent.price || {}, sum);
   return sum;
+}
+
+// agy is deliberately different from the other adapters: its private home log is
+// not a supported data source.  A workboard run's stream-json raw file is the
+// only source we read, and the last result event is the step's final usage.
+function agyRawUsage(file, agent) {
+  let finalUsage = null;
+  for (const line of lines(file)) {
+    const event = j(line);
+    if (!event || (event.type !== 'result' && event.kind !== 'result' && event.event !== 'result')) continue;
+    const u = event.usage || event.result?.usage || event.payload?.usage;
+    if (!u || typeof u !== 'object') continue;
+    finalUsage = {
+      input: u.input_tokens,
+      cached: u.cache_read_tokens,
+      output: u.output_tokens,
+    };
+  }
+  if (!finalUsage) return usageResult({}, false, 'agy raw stream-json');
+  const result = usageResult(finalUsage, true, 'agy raw stream-json');
+  result.costEstimate = costOf(agent?.price || {}, result);
+  return result;
+}
+
+const stepMoment = step => {
+  const value = step?.endedAt || step?.startedAt;
+  const ms = value ? +new Date(value) : NaN;
+  return Number.isFinite(ms) ? ms : NaN;
+};
+const addUsage = (target, value) => {
+  target.input += value.input; target.cached += value.cached; target.output += value.output;
+  target.total += value.total; target.costEstimate += value.costEstimate;
+};
+
+// Enrich a serialized run without writing it.  This is shared by detail and
+// analytics so task figures cannot drift from the aggregate figures.
+export function usageForRun(run, agents = [], runsRoot = '') {
+  const byId = new Map(agents.map(a => [a.id, a]));
+  const steps = Array.isArray(run?.steps) ? run.steps.map(step => {
+    const agent = byId.get(step.agent);
+    let usage = usageResult({}, false, agent ? 'no usage data' : 'no agent');
+    if (agent?.type === 'agy') {
+      const raw = path.join(runsRoot, run.taskId || '', run.runId || '', 'raw', `${step.id}.log`);
+      usage = agyRawUsage(raw, agent);
+    } else if (agent && step.startedAt) {
+      const range = usageInRange(agent, step.startedAt, step.endedAt || Date.now());
+      if (range) usage = { ...range, available: true, source: 'agent local log' };
+    }
+    return { ...step, usage, durationMs: step.startedAt ? Math.max(0, new Date(step.endedAt || Date.now()) - new Date(step.startedAt)) : null };
+  }) : [];
+  const usage = usageResult({}, false, 'no usage data');
+  for (const step of steps) if (step.usage.available) { addUsage(usage, step.usage); usage.available = true; }
+  usage.source = usage.available ? 'step aggregate' : 'no usage data';
+  return { ...run, steps, usage };
+}
+
+const localStart = (kind, now = new Date()) => {
+  const d = new Date(now); d.setHours(0, 0, 0, 0);
+  if (kind === 'week') d.setDate(d.getDate() - 6);
+  if (kind === 'month') d.setDate(1);
+  return +d;
+};
+
+// Read-only analytics over persisted v2 runs.  Bad/missing files are simply
+// unavailable; they are never represented as a real zero-token observation.
+export function collectRunAnalytics(runsRoot, agents = [], now = new Date()) {
+  let taskDirs = []; try { taskDirs = fs.readdirSync(runsRoot, { withFileTypes: true }).filter(x => x.isDirectory()); } catch { taskDirs = []; }
+  const entries = [];
+  for (const taskDir of taskDirs) {
+    let runs = []; try { runs = fs.readdirSync(path.join(runsRoot, taskDir.name), { withFileTypes: true }).filter(x => x.isDirectory()); } catch { continue; }
+    for (const dir of runs) {
+      let run; try { run = JSON.parse(fs.readFileSync(path.join(runsRoot, taskDir.name, dir.name, 'run.json'), 'utf8')); } catch { continue; }
+      const enriched = usageForRun(run, agents, runsRoot);
+      for (const step of enriched.steps) entries.push({ taskId: enriched.taskId || taskDir.name, agent: step.agent || null, at: stepMoment(step), usage: step.usage });
+    }
+  }
+  const make = from => {
+    const usage = usageResult({}, false, 'no usage data'), agentsOut = {};
+    for (const item of entries) {
+      if (!item.usage.available || !Number.isFinite(item.at) || item.at < from) continue;
+      addUsage(usage, item.usage); usage.available = true;
+      if (item.agent) { const bucket = (agentsOut[item.agent] ??= usageResult({}, false, 'step aggregate')); addUsage(bucket, item.usage); bucket.available = true; }
+    }
+    return { ...usage, agents: Object.entries(agentsOut).map(([id, value]) => ({ id, ...value })).sort((a, b) => b.total - a.total) };
+  };
+  const totals = {};
+  for (const item of entries) if (item.usage.available) {
+    const bucket = (totals[item.taskId] ??= usageResult({}, false, 'step aggregate'));
+    addUsage(bucket, item.usage); bucket.available = true;
+  }
+  return {
+    all: make(0), today: make(localStart('today', now)), week: make(localStart('week', now)), month: make(localStart('month', now)),
+    topTasks: Object.entries(totals).map(([taskId, usage]) => ({ taskId, ...usage })).sort((a, b) => b.total - a.total).slice(0, 5),
+  };
 }
