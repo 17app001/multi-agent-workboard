@@ -15,6 +15,7 @@ import { getAdapter } from './adapters/index.mjs';
 import { MODES, MODEL_RE } from './adapters/_util.mjs';
 import { spawnCli, isPidRunning, getProject, projectValid } from './dispatch.mjs';
 import { readCodexQuota } from './quota.mjs';
+import * as worktree from './worktree.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runsDir = path.join(root, 'board/runs');
@@ -332,12 +333,16 @@ export function startRun(taskId) {
   const { agents, pools } = loadAgentConfig();
   const def = loadPipeline(pid, agents, pools);
 
-  let cwd = root;
+  let cwd = root, project = null, wt = null;
   if (task.project) {
     const proj = getProject(task.project);
     if (!proj) throw bad(`任務綁定的專案「${task.project}」不存在(board/projects/${task.project}.json 找不到),拒絕派工`);
     if (!projectValid(proj)) throw bad(`專案「${task.project}」的路徑無效或不存在: ${proj.path},拒絕派工`);
-    cwd = proj.path;
+    cwd = proj.path; project = proj;
+    if (proj.worktrees === true) {
+      try { wt = worktree.createWorktree(proj.path, taskId); cwd = wt.path; }
+      catch (e) { throw bad(`cannot start isolated worktree run: ${e.message}`, 409); }
+    }
   }
   const steps = def.steps.map(s => {
     const type = s.type || 'agent';
@@ -357,7 +362,7 @@ export function startRun(taskId) {
   const runId = 'run-' + now();
   const run = {
     runId, taskId, pipeline: pid, pipelineDef: def, status: 'running', needsYou: null, cursor: 0, revisions: 0,
-    cwd, projectId: task.project || null, startedAt: now(), endedAt: null,
+    cwd, projectId: task.project || null, startedAt: now(), endedAt: null, worktree: wt,
     lastCommandFailed: false, approvalNotes: [], feedback: {}, stepNotes: {}, reviewHistory: [], error: null, steps,
   };
   // 初始落地失敗 → 中止(不 spawn、不建 ctx、不動任務狀態),並清掉這次剛建立的 run 目錄
@@ -367,6 +372,7 @@ export function startRun(taskId) {
     saveRun(run, { strict: true });
   } catch (e) {
     try { fs.rmSync(runPath(taskId, runId), { recursive: true, force: true }); } catch { /* ignore */ }
+    if (wt) { try { worktree.removeWorktree(project.path, wt.path); worktree.deleteBranch(project.path, wt.branch); } catch { /* preserve for manual recovery */ } }
     throw bad(`無法建立 run 記錄(run.json 寫入失敗),已中止且未啟動任何 agent: ${e.message}`, 500);
   }
   const ctx = makeCtx(run);
@@ -433,11 +439,27 @@ function finishRun(ctx, status, note) {
   setTaskStatus(run.taskId, status, `run ${run.runId} ${status}${note ? ': ' + note : ''}`);
 }
 
+function createDiffArtifact(ctx) {
+  const run = ctx.run;
+  if (!run.worktree?.enabled) return { ok: true };
+  try {
+    worktree.intentToAddUntracked(run.worktree.path);
+    fs.writeFileSync(runPath(run.taskId, run.runId, 'artifacts', 'diff.patch'), worktree.diffFromBase(run.worktree.path, run.worktree.baseCommit));
+    run.worktree.status = 'ready'; run.worktree.diffArtifact = 'diff.patch'; saveRun(run);
+    engineEv(ctx, null, 'file-edit', 'created worktree diff.patch', { file: 'diff.patch', phase: 'worktree-diff' });
+    return { ok: true };
+  } catch (e) { return { ok: false, message: `could not create diff.patch: ${e.message}` }; }
+}
+
 async function driveLoop(ctx) {
   const run = ctx.run;
   while (run.status === 'running') {
     const idx = run.cursor;
-    if (idx >= run.steps.length) { finishRun(ctx, 'completed'); return; }
+    if (idx >= run.steps.length) {
+      const artifact = createDiffArtifact(ctx);
+      if (!artifact.ok) { toNeedsYou(ctx, 'worktree-artifact', artifact.message, null); return; }
+      finishRun(ctx, 'completed'); return;
+    }
     const def = run.pipelineDef.steps[idx];
     const st = run.steps[idx];
 
@@ -913,6 +935,38 @@ export function resolveRun(taskId, action) {
     }
   } else throw bad("action 必須是 'retry' | 'complete' | 'abort'");
   return summary(run);
+}
+
+function worktreeRun(taskId) {
+  const ctx = needCtx(taskId), run = ctx.run;
+  if (!run.worktree?.enabled || !run.projectId) throw bad('this run does not use a worktree', 409);
+  const project = getProject(run.projectId);
+  if (!project || !projectValid(project)) throw bad('worktree project is unavailable', 409);
+  return { ctx, run, project };
+}
+export function mergeWorktree(taskId) {
+  const { ctx, run, project } = worktreeRun(taskId);
+  if (run.status !== 'completed') throw bad('only a completed worktree run can be merged', 409);
+  if (run.worktree.status !== 'ready') throw bad('worktree diff is not ready', 409);
+  try {
+    if (worktree.head(project.path) !== run.worktree.baseCommit) throw bad('project HEAD changed since this run started; worktree was preserved', 409);
+    if (worktree.status(project.path)) throw bad('project working tree is not clean; worktree was preserved', 409);
+    const patch = runPath(taskId, run.runId, 'artifacts', 'diff.patch');
+    if (!fs.existsSync(patch)) throw bad('diff.patch is missing; worktree was preserved', 409);
+    worktree.checkApply(project.path, patch); worktree.applyPatch(project.path, patch);
+    worktree.removeWorktree(project.path, run.worktree.path); worktree.deleteBranch(project.path, run.worktree.branch);
+    run.worktree.status = 'merged'; run.worktree.mergedAt = now(); saveRun(run);
+    engineEv(ctx, null, 'message', 'worktree patch merged and worktree removed', { phase: 'worktree-merge' }); return summary(run);
+  } catch (e) { if (e instanceof HttpError) throw e; throw bad(`worktree merge was not applied; worktree was preserved: ${e.message}`, 409); }
+}
+export function discardWorktree(taskId) {
+  const { ctx, run, project } = worktreeRun(taskId);
+  if (!['completed', 'failed', 'cancelled'].includes(run.status)) throw bad('only a stopped or completed worktree run can be discarded', 409);
+  try {
+    worktree.removeWorktree(project.path, run.worktree.path); worktree.deleteBranch(project.path, run.worktree.branch);
+    run.worktree.status = 'discarded'; run.worktree.discardedAt = now(); saveRun(run);
+    engineEv(ctx, null, 'message', 'worktree discarded', { phase: 'worktree-discard' }); return summary(run);
+  } catch (e) { throw bad(`could not discard worktree: ${e.message}`, 409); }
 }
 
 // This is human context for a later retry only. It never becomes a command.

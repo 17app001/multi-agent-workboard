@@ -28,7 +28,7 @@ const countsFile = path.join(cwd, '.fake-counts.json');
 let counts = {};
 try { counts = JSON.parse(fs.readFileSync(countsFile, 'utf8')); } catch { /* 第一次 */ }
 const n = (counts[mode] = (counts[mode] || 0) + 1);
-fs.writeFileSync(countsFile, JSON.stringify(counts));
+if (!control.noRuntimeFiles) fs.writeFileSync(countsFile, JSON.stringify(counts));
 if (process.env.FAKE_LOG) fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ flavor, flagMode, mode, cwd, prompt, n, codexHome: process.env.CODEX_HOME, args: isAgy ? args.slice(1) : args.slice(0, -1) }) + '\n');
 
 const out = o => process.stdout.write(JSON.stringify(o) + '\n');
@@ -68,7 +68,10 @@ if (control.hang === mode) {
     const vs = control.verdicts || ['PASS'];
     text = control.verdictRaw || `VERDICT: ${vs[Math.min(n - 1, vs.length - 1)]}\n審查第 ${n} 次的理由`;
   } else {
-    fs.writeFileSync(path.join(cwd, 'executed.marker'), String(n));
+    if (control.writeTracked) fs.appendFileSync(path.join(cwd, 'work.txt'), `execute ${n}\n`);
+    if (control.writeUntracked) fs.writeFileSync(path.join(cwd, 'new-file.txt'), control.writeUntracked === true ? `new file ${n}\n` : String(control.writeUntracked));
+    if (control.writeIgnored) fs.writeFileSync(path.join(cwd, 'ignored.txt'), control.writeIgnored === true ? `ignored file ${n}\n` : String(control.writeIgnored));
+    else fs.writeFileSync(path.join(cwd, 'executed.marker'), String(n));
     text = `已完成實作 (execute #${n})`;
   }
   message(text);

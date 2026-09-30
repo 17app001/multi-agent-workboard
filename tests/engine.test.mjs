@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -67,6 +67,16 @@ async function mkTask(id, { pipeline, control = {}, agent = 'codex-a', extra = {
   assert.equal((await post('/api/projects', { id: pj, name: pj, path: dir })).status, 200);
   const r = await post('/api/tasks', { id, title: id, agent, status: 'todo', project: pj, pipeline, goal: '目標 ' + id, acceptance: '驗收甲;驗收乙', ...extra });
   assert.equal(r.status, 200);
+  return dir;
+}
+function initGitProject(id, control = {}) {
+  const dir = mkProject(id, { noRuntimeFiles: true, ...control });
+  fs.writeFileSync(path.join(dir, 'work.txt'), 'base\n');
+  execFileSync('git', ['init'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+  execFileSync('git', ['add', '.'], { cwd: dir });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: dir });
   return dir;
 }
 const dispatch = (id, body = {}) => post('/api/dispatch', { id, ...body });
@@ -138,6 +148,100 @@ test('model validation and prompt use the selected model', () => {
   assert.match(engineMod.validatePipeline({ ...valid, steps: [{ ...valid.steps[0], model: 'slow' }] }, agents).errors.join('|'), /unavailable/);
   const prompt = engineMod.buildPrompt({ pipeline: 'single', cwd: sandbox, feedback: {}, approvalNotes: [], taskId: 'x', runId: 'r' }, valid.steps[0], { agent: 'a', model: 'fast' }, { id: 'x' });
   assert.match(prompt, /Final selected model: fast/);
+});
+
+test('worktree runs use an isolated cwd, create diff.patch, then merge or discard safely', async () => {
+  const dir = initGitProject('worktree', { writeTracked: true });
+  const project = 'proj-worktree';
+  assert.equal((await post('/api/projects', { id: project, name: project, path: dir, worktrees: true })).status, 200);
+  assert.equal((await post('/api/tasks', { id: 't-wt', title: 't-wt', agent: 'codex-a', status: 'todo', project, pipeline: 'single' })).status, 200);
+  await startApproved('t-wt');
+  const run = await waitStatus('t-wt', 'completed');
+  assert.equal(run.worktree.status, 'ready');
+  assert.notEqual(run.cwd, dir);
+  assert.ok(fs.existsSync(path.join(sandbox, 'board/runs/t-wt', run.runId, 'artifacts/diff.patch')));
+  assert.equal(fs.readFileSync(path.join(dir, 'work.txt'), 'utf8'), 'base\n');
+  assert.equal((await post('/api/runs/t-wt/merge')).status, 200);
+  assert.match(fs.readFileSync(path.join(dir, 'work.txt'), 'utf8'), /execute 1/);
+  assert.ok(!fs.existsSync(run.worktree.path));
+
+  assert.equal((await post('/api/tasks', { id: 't-wt-discard', title: 't-wt-discard', agent: 'codex-a', status: 'todo', project, pipeline: 'single' })).status, 200);
+  await dispatch('t-wt-discard'); await waitNeeds('t-wt-discard', 'approval');
+  assert.equal((await post('/api/runs/t-wt-discard/discard')).status, 409);
+  assert.equal((await post('/api/runs/t-wt-discard/stop')).status, 200);
+  const discarded = await post('/api/runs/t-wt-discard/discard');
+  assert.equal(discarded.status, 200, JSON.stringify(discarded.json));
+  const discardedRun = await getRun('t-wt-discard');
+  assert.equal(discardedRun.worktree.status, 'discarded');
+  assert.ok(!fs.existsSync(discardedRun.worktree.path));
+  assert.equal(execFileSync('git', ['branch', '--list', discardedRun.worktree.branch], { cwd: dir, encoding: 'utf8' }).trim(), '');
+});
+
+test('worktree merge refuses a moved base or dirty main checkout and preserves the isolated run', async () => {
+  const makeRun = async (id) => {
+    const dir = initGitProject(id, { writeTracked: true });
+    const project = 'proj-' + id;
+    assert.equal((await post('/api/projects', { id: project, name: project, path: dir, worktrees: true })).status, 200);
+    assert.equal((await post('/api/tasks', { id, title: id, agent: 'codex-a', status: 'todo', project, pipeline: 'single' })).status, 200);
+    await startApproved(id);
+    return { dir, run: await waitStatus(id, 'completed') };
+  };
+
+  const moved = await makeRun('t-wt-moved');
+  fs.writeFileSync(path.join(moved.dir, 'advance.txt'), 'advance\n');
+  execFileSync('git', ['add', 'advance.txt'], { cwd: moved.dir });
+  execFileSync('git', ['commit', '-m', 'advance base'], { cwd: moved.dir });
+  const movedMerge = await post('/api/runs/t-wt-moved/merge');
+  assert.equal(movedMerge.status, 409);
+  assert.ok(fs.existsSync(moved.run.worktree.path));
+  assert.match(fs.readFileSync(path.join(moved.run.worktree.path, 'work.txt'), 'utf8'), /execute 1/);
+  assert.equal(fs.readFileSync(path.join(moved.dir, 'work.txt'), 'utf8'), 'base\n');
+  assert.equal((await getRun('t-wt-moved')).worktree.status, 'ready');
+  assert.equal((await post('/api/runs/t-wt-moved/discard')).status, 200);
+
+  const dirty = await makeRun('t-wt-dirty');
+  fs.appendFileSync(path.join(dirty.dir, 'work.txt'), 'local uncommitted change\n');
+  const dirtyMerge = await post('/api/runs/t-wt-dirty/merge');
+  assert.equal(dirtyMerge.status, 409);
+  assert.ok(fs.existsSync(dirty.run.worktree.path));
+  assert.match(fs.readFileSync(path.join(dirty.run.worktree.path, 'work.txt'), 'utf8'), /execute 1/);
+  assert.match(fs.readFileSync(path.join(dirty.dir, 'work.txt'), 'utf8'), /local uncommitted change/);
+  assert.equal((await getRun('t-wt-dirty')).worktree.status, 'ready');
+  assert.equal((await post('/api/runs/t-wt-dirty/discard')).status, 200);
+});
+
+test('worktree dispatch rejects a non-Git project before starting an agent', async () => {
+  const id = 't-wt-not-git';
+  const dir = mkProject(id, { noRuntimeFiles: true });
+  const project = 'proj-' + id;
+  assert.equal((await post('/api/projects', { id: project, name: project, path: dir, worktrees: true })).status, 200);
+  assert.equal((await post('/api/tasks', { id, title: id, agent: 'codex-a', status: 'todo', project, pipeline: 'single' })).status, 200);
+  const result = await dispatch(id);
+  assert.equal(result.status, 409);
+  assert.equal(calls(id).length, 0);
+  assert.ok(!fs.existsSync(path.join(dir, 'executed.marker')));
+  assert.equal((await api('/api/runs/' + id)).status, 404);
+});
+
+test('worktree diff and merge include untracked non-ignored files', async () => {
+  const id = 't-wt-untracked';
+  const dir = initGitProject(id, { writeUntracked: 'created by fake CLI\n', writeIgnored: 'must stay ignored\n' });
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'ignored.txt\n');
+  execFileSync('git', ['add', '.gitignore'], { cwd: dir });
+  execFileSync('git', ['commit', '-m', 'ignore fixture'], { cwd: dir });
+  const project = 'proj-' + id;
+  assert.equal((await post('/api/projects', { id: project, name: project, path: dir, worktrees: true })).status, 200);
+  assert.equal((await post('/api/tasks', { id, title: id, agent: 'codex-a', status: 'todo', project, pipeline: 'single' })).status, 200);
+  await startApproved(id);
+  const run = await waitStatus(id, 'completed');
+  const patch = fs.readFileSync(path.join(sandbox, 'board/runs', id, run.runId, 'artifacts/diff.patch'), 'utf8');
+  assert.match(patch, /new-file\.txt/);
+  assert.match(patch, /created by fake CLI/);
+  assert.doesNotMatch(patch, /ignored\.txt|must stay ignored/);
+  assert.equal((await post('/api/runs/' + id + '/merge')).status, 200);
+  // Windows autocrlf 可能把 LF 轉成 CRLF,所以先正規化再比對
+  assert.equal(fs.readFileSync(path.join(dir, 'new-file.txt'), 'utf8').split('\r\n').join('\n'), 'created by fake CLI\n');
+  assert.ok(!fs.existsSync(path.join(dir, 'ignored.txt')));
 });
 
 after(async () => {
