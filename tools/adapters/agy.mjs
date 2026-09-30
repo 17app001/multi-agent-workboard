@@ -1,17 +1,18 @@
 // Antigravity CLI adapter。旗標與 stream-json schema 經 2026-09-30 以 agy 1.2.7 實測:
 //   agy -p=<prompt> --mode plan --output-format stream-json -> exit 0,NDJSON。
 // prompt 必須和 -p 綁在同一個 argv 項目；execute 模式(accept-edits)未實跑。
-import { assertMode, isReadOnly, parseJsonLine, ev } from './_util.mjs';
+import { assertMode, assertModel, isReadOnly, parseJsonLine, ev } from './_util.mjs';
 
 export const id = 'agy';
 
-export function buildCommand({ mode, prompt, cwd, agentCfg = {} }) {
+export function buildCommand({ mode, prompt, cwd, agentCfg = {}, model }) {
   assertMode(mode);
   const args = [
     `-p=${String(prompt ?? '')}`,
     '--mode', isReadOnly(mode) ? 'plan' : 'accept-edits',
     '--output-format', 'stream-json'
   ];
+  if (assertModel(model)) args.push('--model', model);
   return { cmd: agentCfg.cmd || 'agy', args, env: {}, cwd };
 }
 

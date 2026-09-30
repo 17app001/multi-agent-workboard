@@ -2,13 +2,14 @@
 //   codex exec -s read-only --json --skip-git-repo-check -C <dir> "<prompt>" → exit 0,JSONL。
 // execute 模式(-s workspace-write)未實跑,僅單元測試驗證 args。
 // 注意:codex exec 會印 "Reading additional input from stdin..." 到 stderr;spawn 時 stdin 用 'ignore'。
-import { expandHome, assertMode, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
+import { expandHome, assertMode, assertModel, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
 
 export const id = 'codex';
 
-export function buildCommand({ mode, prompt, cwd, agentCfg = {} }) {
+export function buildCommand({ mode, prompt, cwd, agentCfg = {}, model }) {
   assertMode(mode);
   const args = ['exec', '-s', isReadOnly(mode) ? 'read-only' : 'workspace-write', '--json', '--skip-git-repo-check'];
+  if (assertModel(model)) args.push('-m', model);
   if (cwd) args.push('-C', cwd);
   args.push(prompt);
   const env = {};

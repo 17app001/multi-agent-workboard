@@ -73,6 +73,8 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
     <div class=modalhead><b>新任務</b><button id=taskClose>✕ 關閉</button></div>
     <div class=form>
       <label>標題<input id=fTitle></label>
+      <label>Agent<select id=fAgent></select></label>
+      <label>Model<select id=fModel></select></label>
       <label>專案<select id=fProject></select></label>
       <label>目標(goal)<textarea id=fGoal rows=2></textarea></label>
       <label>驗收條件(acceptance,用 ; 分隔)<textarea id=fAcc rows=2></textarea></label>
@@ -172,12 +174,14 @@ document.addEventListener('click',async e=>{
  if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
 });
 document.addEventListener('change',e=>{if(e.target.matches('select')&&e.target.dataset.id)post({id:e.target.dataset.id,agent:e.target.value})});
+async function refreshTaskModels(){const agent=$('#fAgent').value;if(!agent){$('#fModel').innerHTML=modelOptionsHtml([]);return}try{const r=await api('agents/'+encodeURIComponent(agent)+'/models');$('#fModel').innerHTML=modelOptionsHtml(r.models||[])}catch(e){$('#fModel').innerHTML=modelOptionsHtml([])}}
+$('#fAgent').onchange=refreshTaskModels;
 $('#add').onclick=()=>{['#fTitle','#fGoal','#fAcc','#fFiles'].forEach(s=>$(s).value='');
- $('#fProject').innerHTML=projectOptionsHtml(projects);
+ $('#fProject').innerHTML=projectOptionsHtml(projects);$('#fAgent').innerHTML=agentOptionsHtml(cfg.agents);refreshTaskModels();
  $('#taskModal').hidden=false;$('#fTitle').focus()};
 $('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
 $('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){alert('請填標題');return}
- await post({title,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true};
+ await post({title,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true};
 function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(projectRowHtml).join(''):'<div class=mut>尚無專案</div>'}
 $('#projBtn').onclick=()=>{paintProjects();$('#projModal').hidden=false};
 $('#projClose').onclick=()=>{$('#projModal').hidden=true};

@@ -95,6 +95,18 @@ const rawReq = (method, p, { headers = {}, body } = {}) => new Promise((ok, no) 
   if (body !== undefined) req.write(body);
   req.end();
 });
+test('task model is CRLF-safe and agent models endpoint returns declared choices', async () => {
+  const saved = await api('/api/tasks', { method: 'POST', body: { id: 'model-task', model: 'gpt-5.6-sol\r\nstatus: done' } });
+  assert.equal(saved.json.model, 'gpt-5.6-sol status: done');
+  const raw = fs.readFileSync(path.join(sandbox, 'board/tasks/model-task.md'), 'utf8');
+  assert.match(raw, /^model: gpt-5\.6-sol status: done$/m);
+  const models = await api('/api/agents/codex-a/models');
+  assert.equal(models.status, 200);
+  assert.ok(Array.isArray(models.json.models));
+  assert.equal(models.json.id, 'codex-a');
+  assert.equal((await api('/api/agents/nope/models')).status, 404);
+});
+
 const JSON_H = { 'content-type': 'application/json' };
 const taskExists = id => fs.existsSync(path.join(sandbox, 'board/tasks', id + '.md'));
 

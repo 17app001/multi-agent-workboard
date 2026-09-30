@@ -6,13 +6,14 @@
 // 因此 parseLine 依據 Gemini CLI 文件的 stream-json 事件 schema(init/message/tool_use/
 // tool_result/error/result)撰寫,fixture 為「合成樣本」,**未經真實輸出驗證**。
 // execute 模式(auto_edit)未實跑。
-import { expandHome, assertMode, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
+import { expandHome, assertMode, assertModel, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
 
 export const id = 'gemini';
 
-export function buildCommand({ mode, prompt, cwd, agentCfg = {} }) {
+export function buildCommand({ mode, prompt, cwd, agentCfg = {}, model }) {
   assertMode(mode);
   const args = ['-p', prompt, '--approval-mode', isReadOnly(mode) ? 'plan' : 'auto_edit', '-o', 'stream-json'];
+  if (assertModel(model)) args.push('-m', model);
   // 未信任資料夾 headless 需要此旗標(否則 approval mode 被降為 default)。預設不加,由 agentCfg.skipTrust 明確開啟。
   if (agentCfg.skipTrust) args.push('--skip-trust');
   const env = {};

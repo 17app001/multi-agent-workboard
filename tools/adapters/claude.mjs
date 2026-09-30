@@ -2,13 +2,15 @@
 //   claude -p --permission-mode plan --output-format stream-json --verbose "<prompt>"  → exit 0,NDJSON。
 // stream-json 在 -p 下需要 --verbose(spec 原記載;本次以帶 --verbose 實跑成功,未單獨測不帶的組合)。
 // execute 模式(acceptEdits)未實跑,僅單元測試驗證 args。
-import { expandHome, assertMode, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
+import { expandHome, assertMode, assertModel, isReadOnly, parseJsonLine, ev, cmdKind, permissionError, PERMISSION_RE } from './_util.mjs';
 
 export const id = 'claude';
 
-export function buildCommand({ mode, prompt, cwd, agentCfg = {} }) {
+export function buildCommand({ mode, prompt, cwd, agentCfg = {}, model }) {
   assertMode(mode);
-  const args = ['-p', '--permission-mode', isReadOnly(mode) ? 'plan' : 'acceptEdits', '--output-format', 'stream-json', '--verbose', prompt];
+  const args = ['-p', '--permission-mode', isReadOnly(mode) ? 'plan' : 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
+  if (assertModel(model)) args.push('--model', model);
+  args.push(prompt);
   const env = {};
   if (agentCfg.home && agentCfg.home !== '~/.claude') env.CLAUDE_CONFIG_DIR = expandHome(agentCfg.home);
   return { cmd: agentCfg.cmd || 'claude', args, env, cwd };

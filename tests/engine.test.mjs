@@ -127,6 +127,19 @@ before(async () => {
   engineMod = await import(pathToFileURL(path.join(sandbox, 'tools/engine.mjs')).href + '?t=' + Date.now());
 });
 
+test('model validation and prompt use the selected model', () => {
+  const agents = [
+    { id: 'a', type: 'codex', models: [{ id: 'fast', label: 'Fast' }], defaultModel: 'fast' },
+    { id: 'b', type: 'codex', models: [{ id: 'slow', label: 'Slow' }], defaultModel: 'slow' },
+  ];
+  const valid = { id: 'models', steps: [{ id: 'plan', agent: 'a', mode: 'plan', model: 'fast' }] };
+  assert.equal(engineMod.validatePipeline(valid, agents).ok, true);
+  assert.match(engineMod.validatePipeline({ ...valid, steps: [{ ...valid.steps[0], model: 'bad model' }] }, agents).errors.join('|'), /invalid model/);
+  assert.match(engineMod.validatePipeline({ ...valid, steps: [{ ...valid.steps[0], model: 'slow' }] }, agents).errors.join('|'), /unavailable/);
+  const prompt = engineMod.buildPrompt({ pipeline: 'single', cwd: sandbox, feedback: {}, approvalNotes: [], taskId: 'x', runId: 'r' }, valid.steps[0], { agent: 'a', model: 'fast' }, { id: 'x' });
+  assert.match(prompt, /Final selected model: fast/);
+});
+
 after(async () => {
   try { if (proc && proc.exitCode === null) await killServer(); } catch { /* ignore */ }
   // 殘留的假 CLI 卡住行程:逐一用記錄的 hang.pid 收掉(只殺本檔自己啟動的)

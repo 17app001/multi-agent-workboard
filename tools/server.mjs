@@ -2,6 +2,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
@@ -12,6 +13,19 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
 const projectsDir = path.join(root, 'board/projects');
 const cfg = () => JSON.parse(fs.readFileSync(path.join(root, 'agents.json'), 'utf8'));
+const MODEL_RE = /^[\w.:-]+$/;
+const declaredModels = agent => (Array.isArray(agent?.models) ? agent.models : []).map(m => typeof m === 'string' ? { id: m, label: m } : m).filter(m => m && MODEL_RE.test(String(m.id)));
+const agyModels = agent => new Promise(resolve => {
+  execFile(agent.cmd || 'agy', ['models'], { timeout: 1500, windowsHide: true, shell: false }, (error, stdout) => {
+    if (error) return resolve(null);
+    try {
+      const parsed = JSON.parse(stdout);
+      const values = Array.isArray(parsed) ? parsed : (parsed.models || []);
+      const models = values.map(m => typeof m === 'string' ? { id: m, label: m } : { id: m?.id || m?.name, label: m?.label || m?.name || m?.id }).filter(m => MODEL_RE.test(String(m.id)));
+      resolve(models.length ? models : null);
+    } catch { resolve(null); }
+  });
+});
 
 function parse(file) {
   const raw = fs.readFileSync(path.join(tasksDir, file), 'utf8').replace(/\r\n/g, '\n');
@@ -28,6 +42,7 @@ function save(t) {
   // files 是可選欄位:只有真的有值時才寫進 frontmatter,避免幫從沒填過 files
   // 的舊任務憑空多出一行空的 `files: `。
   const fields = ['title', 'status', 'agent', 'priority'];
+  if (meta.model) fields.push('model');
   for (const k of ['files', 'project', 'pipeline', 'goal', 'acceptance']) if (meta[k]) fields.push(k);
   fields.push('updated');
   const fm = fields.map(k => `${k}: ${oneLine(meta[k] ?? '')}`).join('\n');
@@ -180,6 +195,13 @@ http.createServer(async (req, res) => {
     const denied = guard(req, url.pathname);
     if (denied) return send(res, denied.code, { error: denied.error });
     if (url.pathname === '/api/config') return send(res, 200, cfg());
+    const mModels = url.pathname.match(/^\/api\/agents\/([\w-]+)\/models$/);
+    if (mModels && req.method === 'GET') {
+      const agent = cfg().agents.find(a => a.id === mModels[1]);
+      if (!agent) return send(res, 404, { error: 'agent not found' });
+      const models = agent.type === 'agy' ? (await agyModels(agent) || declaredModels(agent)) : declaredModels(agent);
+      return send(res, 200, { id: agent.id, models, defaultModel: agent.defaultModel || null });
+    }
     if (url.pathname === '/api/session/briefing' && req.method === 'GET') return send(res, 200, buildBriefing({ root }));
     if (url.pathname === '/api/session/wrapup' && req.method === 'POST') {
       const body = await readBody(req);
@@ -236,7 +258,7 @@ http.createServer(async (req, res) => {
       const file = path.join(tasksDir, id + '.md');
       const cur = fs.existsSync(file) ? parse(id + '.md') : { id, title: 'Untitled', status: 'backlog', agent: '', priority: 'p1', body: '\n\n## Log\n' };
       const next = { ...cur };
-      for (const k of ['title', 'status', 'agent', 'priority', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = oneLine(b[k]);
+      for (const k of ['title', 'status', 'agent', 'priority', 'model', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = oneLine(b[k]);
       save(next);
       return send(res, 200, view(parse(id + '.md')));
     }

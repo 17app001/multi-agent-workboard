@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getAdapter } from './adapters/index.mjs';
-import { MODES } from './adapters/_util.mjs';
+import { MODES, MODEL_RE } from './adapters/_util.mjs';
 import { spawnCli, isPidRunning, getProject, projectValid } from './dispatch.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,7 +26,16 @@ const bad = (msg, status = 400) => new HttpError(status, msg);
 
 const ID_RE = /^[\w-]+$/;
 const NAME_RE = /^[\w.-]+$/;
+export const validModel = value => typeof value === 'string' && MODEL_RE.test(value);
 export const safeName = n => typeof n === 'string' && NAME_RE.test(n) && !/^\.+$/.test(n) && !n.includes('..');
+const modelIds = agent => Array.isArray(agent?.models) ? agent.models.map(m => typeof m === 'string' ? m : m?.id).filter(validModel) : [];
+function resolveModel(def, task, agent) {
+  const requested = def.model ?? task.model ?? agent.defaultModel;
+  if (requested === undefined || requested === null || requested === '') return null;
+  if (!validModel(requested)) throw bad(`step ${def.id}: invalid model`);
+  if (!modelIds(agent).includes(requested)) throw bad(`step ${def.id}: model ${requested} is unavailable for agent ${agent.id}`);
+  return requested;
+}
 function loadAgentConfig() {
   const config = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
   return { agents: Array.isArray(config.agents) ? config.agents : [], pools: config.pools && typeof config.pools === 'object' ? config.pools : {} };
@@ -62,6 +71,7 @@ export function validatePipeline(def, agents = [], pools = {}) {
     const type = s.type === undefined ? 'agent' : s.type;
     if (type !== 'agent' && type !== 'command') err(`${L}: type 只能是 agent 或 command(目前: ${JSON.stringify(s.type)})`);
     if (type === 'command') {
+      if (s.model !== undefined) err(`${L}: command step cannot have model`);
       if (typeof s.command !== 'string' || !s.command.trim()) err(`${L}: command 類 step 必須有 command 字串`);
       if (s.agent !== undefined || s.pool !== undefined) err(`${L}: command step 不可指定 agent 或 pool`);
     } else if (type === 'agent') {
@@ -114,6 +124,18 @@ export function validatePipeline(def, agents = [], pools = {}) {
       if (s.when === undefined) err(`${L}: 有 loopTo 的 step 必須有 when 條件(否則會無條件迴圈)`);
     }
   });
+  for (const agent of agents) {
+    if (agent?.defaultModel !== undefined && !modelIds(agent).includes(agent.defaultModel)) err(`agent ${agent.id}: defaultModel is unavailable`);
+  }
+  for (const s of def.steps) {
+    if (!s || s.model === undefined) continue;
+    if (!validModel(s.model)) { err(`step ${s.id || '?'}: invalid model`); continue; }
+    if ((s.type || 'agent') === 'command') { err(`step ${s.id || '?'}: command step cannot have model`); continue; }
+    if (typeof s.agent === 'string' && s.agent !== '@task') {
+      const a = agentIds.get(s.agent);
+      if (a && !modelIds(a).includes(s.model)) err(`step ${s.id}: model is unavailable for agent ${s.agent}`);
+    }
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -317,7 +339,9 @@ export function startRun(taskId) {
       if (a.enabled === false) throw bad(`step「${s.id}」的 agent「${agent}」已停用(enabled:false)`);
       if (!getAdapter(a.type)) throw bad(`agent「${agent}」的 type「${a.type}」沒有對應 adapter`);
     }
-    return { id: s.id, type, agent, pool: s.pool || null, mode: s.mode || null, status: 'pending', attempts: 0, agentAttempts: [], startedAt: null, endedAt: null, exitCode: null, pid: null };
+    const agentCfg = agent ? agents.find(x => x.id === agent) : null;
+    const model = agentCfg ? resolveModel(s, task, agentCfg) : null;
+    return { id: s.id, type, agent, pool: s.pool || null, mode: s.mode || null, model, status: 'pending', attempts: 0, agentAttempts: [], startedAt: null, endedAt: null, exitCode: null, pid: null };
   });
   const runId = 'run-' + now();
   const run = {
@@ -421,6 +445,17 @@ async function driveLoop(ctx) {
         return;
       }
       st.agent = choice.agent;
+      st.model = null;
+      saveRun(run);
+    }
+    if (st.type === 'agent' && st.status !== 'running') {
+      const agentCfg = loadAgents().find(a => a.id === st.agent);
+      try { st.model = resolveModel(def, readTask(run.taskId) || {}, agentCfg); }
+      catch (e) {
+        st.status = 'blocked'; st.endedAt = now(); saveRun(run);
+        toNeedsYou(ctx, 'model-unavailable', e.message, def.id);
+        return;
+      }
       saveRun(run);
     }
     assertGatesCleared(run, idx);
@@ -558,6 +593,7 @@ function readArtifact(run, name) {
 }
 export function buildPrompt(run, def, st, task) {
   const P = [];
+  if (st.model) P.push(`Final selected model: ${st.model}`);
   P.push(`你是 agent「${st.agent}」,正在執行 pipeline「${run.pipeline}」的步驟「${def.id}」(mode: ${def.mode})。`);
   P.push(`工作目錄: ${run.cwd}。若專案內有 AGENTS.md 或 CLAUDE.md 請先閱讀並遵守。`);
   const acc = String(task.acceptance || '').split(';').map(s => s.trim()).filter(Boolean);
@@ -645,9 +681,9 @@ async function runAgentStep(ctx, idx, resume) {
     st.rawStart = fs.statSync(rawFile).size; st.tailOffset = st.rawStart;
     try { fs.writeFileSync(runPath(run.taskId, run.runId, 'raw', def.id + '.prompt.md'), prompt); } catch { /* ignore */ }
     saveRun(run);
-    engineEv(ctx, def.id, 'start', `step ${def.id} 開始(${st.agent}, ${def.mode})`);
+    engineEv(ctx, def.id, 'start', `step ${def.id} 開始(${st.agent}, ${def.mode}${st.model ? `, ${st.model}` : ''})`, { model: st.model });
     try {
-      const built = adapter.buildCommand({ mode: def.mode, prompt, cwd: run.cwd, agentCfg });
+      const built = adapter.buildCommand({ mode: def.mode, prompt, cwd: run.cwd, agentCfg, model: st.model });
       const fd = fs.openSync(rawFile, 'a');
       try {
         child = spawnCli(built.cmd, [...(agentCfg.cmdPrefix || []), ...built.args], {

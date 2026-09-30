@@ -3,9 +3,14 @@ import os from 'node:os';
 
 export const expandHome = p => String(p || '').replace(/^~/, os.homedir());
 export const MODES = ['plan', 'execute', 'review'];
+export const MODEL_RE = /^[\w.:-]+$/;
 export function assertMode(mode) {
   if (!MODES.includes(mode)) throw new Error('未知 mode: ' + mode + '(需為 plan|execute|review)');
   return mode;
+}
+export function assertModel(model) {
+  if (model !== undefined && model !== null && !MODEL_RE.test(String(model))) throw new Error('invalid model');
+  return model || null;
 }
 // plan 與 review 都是唯讀
 export const isReadOnly = mode => mode !== 'execute';

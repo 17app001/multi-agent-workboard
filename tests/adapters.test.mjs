@@ -86,6 +86,14 @@ test('agy buildCommand', () => {
   assert.equal(e.cmd, 'agy');
 });
 
+test('buildCommand supports safe model flags', () => {
+  assert.ok(registry.claude.buildCommand({ mode: 'plan', prompt: P, cwd: CWD, model: 'sonnet' }).args.includes('--model'));
+  assert.ok(registry.codex.buildCommand({ mode: 'plan', prompt: P, cwd: CWD, model: 'gpt-5.6-sol' }).args.includes('-m'));
+  assert.ok(registry.gemini.buildCommand({ mode: 'plan', prompt: P, cwd: CWD, model: 'gemini-2.5-pro' }).args.includes('-m'));
+  assert.ok(registry.agy.buildCommand({ mode: 'plan', prompt: P, cwd: CWD, model: 'gemini-3.8-flash-high' }).args.includes('--model'));
+  for (const adapter of Object.values(registry)) assert.throws(() => adapter.buildCommand({ mode: 'plan', prompt: P, cwd: CWD, model: 'bad model;rm' }));
+});
+
 const samples = { claude: 'claude-plan-sample.jsonl', codex: 'codex-plan-sample.jsonl', gemini: 'gemini-plan-sample.jsonl', agy: 'agy-plan-sample.jsonl' };
 for (const [type, file] of Object.entries(samples)) {
   test(`${type} parseLine:樣本逐行餵入(${file})`, () => {

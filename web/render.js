@@ -38,6 +38,7 @@ function taskCardHtml(t, cfg, projects, runStatus) {
  <span class=mut>${esc(t.priority)}</span> ${badgeHtml(t, runStatus)}</div>
  ${projLineHtml(t, projects)}
  ${t.goal ? `<div class=mut>🎯 ${esc(t.goal)}</div>` : ''}
+ ${t.model ? `<div class=mut>Model: ${esc(t.model)}</div>` : ''}
  ${t.files ? `<div class=mut>📁 ${esc(t.files)}</div>` : ''}
  <div class=row>${t.agent && t.status != 'done' ? `<button data-run="${esc(t.id)}">▶ 派工</button>` : ''}
  ${runStatus[t.id]?.status === 'running' ? `<button class="iconbtn stop" data-stop="${esc(t.id)}">■ 停止</button>` : ''}
@@ -49,6 +50,13 @@ function taskCardHtml(t, cfg, projects, runStatus) {
 function columnsHtml(cfg, tasks, projects, runStatus) {
   return cfg.columns.map(c => `<div class=col data-c="${esc(c)}"><h3>${esc(c)} (${tasks.filter(t => t.status == c).length})</h3>${
     tasks.filter(t => t.status == c).map(t => taskCardHtml(t, cfg, projects, runStatus)).join('')}</div>`).join('');
+}
+
+function agentOptionsHtml(agents) {
+  return '<option value="">(no agent)</option>' + agents.map(a => `<option value="${esc(a.id)}">${esc(a.label || a.id)}</option>`).join('');
+}
+function modelOptionsHtml(models, selected = '') {
+  return '<option value="">Use agent / CLI default</option>' + (models || []).map(m => `<option value="${esc(m.id)}"${m.id === selected ? ' selected' : ''}>${esc(m.label || m.id)}</option>`).join('');
 }
 
 function projectOptionsHtml(projects) {
