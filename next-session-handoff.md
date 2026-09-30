@@ -23,7 +23,7 @@
 - **commander pipeline**(開工計畫→施工×2→審查→收工)方案已在對話提出,待使用者確認例行審查用無頭 Claude 或交給 codex/agy。
 
 - **WP10(選模型)已完成並複核**(`npm test` 95/95):agents.json 有 `models`/`defaultModel`,`GET /api/agents/:id/models`;UI 選單未經瀏覽器實測。
-- **回家後第一件事(agy 真實測試)**:使用者需在自己的終端機執行 `node D:\MyProject\multi-agent-workboard\tools\agy-permissions.mjs on`(備份並開啟 agy 全域 `command(*)`),Claude 才能做 agy 的 plan→核准→施工實測(暫存資料夾);測完務必 `off` 還原。目前狀態為**未開啟**。
+- **agy 真實測試已通過(2026-09-30)**:在暫存 repo 用引擎派 agy 跑 single pipeline:plan.md 完整擷取(1979 bytes)→ 核准 → execute 修改 hello.txt 正確,128 筆事件、無錯誤。前提是 agy 全域開了 `command(*)`(`node tools/agy-permissions.mjs on`)——**用完務必 `off` 還原**;`agy-permissions.mjs status` 可查目前狀態。
 - 額度:codex-b(Mika)5h 已用約 58%(13:27 重置)。
 - 剩餘:WP5、WP6、WP7、WP8、WP13(看板顯示 codex 額度%)。
 
