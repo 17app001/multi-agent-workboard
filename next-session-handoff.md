@@ -31,7 +31,8 @@
 - **已完成並 push**:WP1–5、WP7、WP9–16(含 WP5 首頁重做/通知置頂/中文化/完成卡收起、WP13 codex 額度顯示與提前換手、WP14 需求自動拆解、WP15 CDP 瀏覽器 e2e、WP16 修 flaky)。`npm test` 113/113、`npm run test:e2e` 6/6(真實 Chrome)。
 - **施工者分工實績**:Mika(codex-b)做 WP10/11/12/13/14/7/5;agy 做 WP15、WP16(開了全域 command(*) 期間);Claude 只審查與複核。
 - **agy 全域權限已用 `tools/agy-permissions.mjs off` 還原**;再用 agy 施工前需使用者自己執行 `on`。
-- **看板上有兩個等核准的 run(使用者從遠端派的,Claude 未動)**:WP6 worktree、WP8 任務用量(WP8 第一次用 gemini 失敗 exit 55,改 agy 後停在 plan 核准)。要用 agy 的話需先 `on`。這兩張卡在工作區有未 commit 的狀態改動(needs-you)。
+- **WP6(worktree 隔離,含 merge/discard API)與 WP8(任務級用量、用量分析頁、agy 用量)已由 Mika 施工、Claude 複核並依使用者指示完成(done)**;`npm test` 122/122、e2e 6/6。WP8 複核時抓到 agy 用量解析對真實輸出格式(`{"event":"result"}`)失效的 bug 並已修正——解析器測試須用真實樣本。
+- **狀態為 review 的卡**(WP5/7/13/14/15/16):已複核通過,等使用者實際點畫面確認後改 done。WP6 merge/discard 尚無 UI 按鈕。
 - 尚未做:commander 模板、WP6/WP8(已有 run 等核准)、開機自啟。**畫面仍建議使用者實測**(需求拆解、額度卡、回修介面尚無 e2e)。
 - 已知風險:各 agent 有 defaultModel 會明確傳旗標;claude/agy 的 quota 偵測仍只回 false。
 

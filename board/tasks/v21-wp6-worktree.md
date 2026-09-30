@@ -1,6 +1,6 @@
 ---
 title: WP6 git worktree 隔離
-status: review
+status: done
 agent: codex-b
 priority: p2
 files: tools/engine.mjs,tools/worktree.mjs

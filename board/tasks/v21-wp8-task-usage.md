@@ -1,6 +1,6 @@
 ---
 title: WP8 任務級用量與 Analytics
-status: review
+status: done
 agent: codex-b
 priority: p2
 files: web/index.html,web/render.js,web/detail.js,tools/usage.mjs,tools/server.mjs,tests
