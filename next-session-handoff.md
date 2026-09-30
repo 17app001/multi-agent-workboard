@@ -13,6 +13,10 @@
 - 實作/審查優先派 codex-a 與 agy(用看板 `POST /api/dispatch` 或 UI 派工),Claude 只決策/複核/跑測試(codex 沙箱不能 spawn 子行程,跑不了本 repo 測試)。
 - 額度到約 50% 就收工:整理記憶、文檔、push。
 
+## 最新進展(收工前補記)
+- **WP4 中斷**:codex-a 額度用完(約 12:19 PM 重置),`tools/server.mjs` 已有未複核的 SSE 程式(已 commit 為 WIP);改派 agy 失敗——**agy headless 會自動拒絕所有 command 權限**(見 WP4 卡 Log)。WP4 卡已退回 backlog/codex-a。下一步:codex 額度恢復後重派(single pipeline,Claude 審計畫後核准),或由 Claude 派 sonnet subagent 接手。
+- **需要使用者決定**:要不要在 agy 的 settings.json `permissions.allow` 加唯讀指令白名單,讓 agy 能施工/審查(我不擅自改你的 CLI 設定)。
+
 ## 待使用者決定 / 已知風險
 1. D3:execute 權限強度與 command step 是否改 `{command,args}`+`shell:false`(審查 #8)。
 2. 審查 #10:prompt 信任邊界、核准計畫 hash 與 diff 範圍檢查(WP6 後做)。
