@@ -27,7 +27,12 @@
 - 額度:codex-b(Mika)5h 已用約 58%(13:27 重置)。
 - 剩餘:WP5、WP6、WP7、WP8、WP13(看板顯示 codex 額度%)。
 
-## 2026-09-30 深夜收工狀態(最新,以此為準)
+## 2026-10-01 最新狀態(以此為準;詳見 docs/worklog-2026-10-01.md、docs/使用手冊.md)
+- 使用者指示 Claude 獨自把整個機制做完、**先不派其他 agent**,完成後由使用者測試。已完成:首頁效能(worker thread)、流程選單、專案 testCommand/worktree 設定、worktree 合併/丟棄 UI、需求拆解 UI 修正、agy 權限提示、任務用量(codex/claude/agy raw log)、使用手冊。
+- **驗證**:`npm test` 128、`npm run test:e2e` 12(真實 Chrome);**真實 CLI 端到端**(Claude 計畫→核准→codex-b 施工→Claude 審查 PASS)通過。
+- 使用者測試清單在 worklog-2026-10-01.md。提交前請跑 `/tmp/gate.sh` 等價流程(npm test && npm run test:e2e 皆 exit 0 才 commit)。
+
+## 2026-09-30 深夜收工狀態(較舊)
 - **已完成並 push**:WP1–5、WP7、WP9–16(含 WP5 首頁重做/通知置頂/中文化/完成卡收起、WP13 codex 額度顯示與提前換手、WP14 需求自動拆解、WP15 CDP 瀏覽器 e2e、WP16 修 flaky)。`npm test` 113/113、`npm run test:e2e` 6/6(真實 Chrome)。
 - **施工者分工實績**:Mika(codex-b)做 WP10/11/12/13/14/7/5;agy 做 WP15、WP16(開了全域 command(*) 期間);Claude 只審查與複核。
 - **agy 全域權限已用 `tools/agy-permissions.mjs off` 還原**;再用 agy 施工前需使用者自己執行 `on`。

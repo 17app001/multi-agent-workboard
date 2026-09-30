@@ -401,3 +401,32 @@ test('(k) 需求自動拆解:開始拆解 → 出現草案 → 編輯標題 → 
   assert.equal(created.a.status, 'backlog', '建立的卡預設 backlog,不自動派工');
   assert.ok(String(created.b.dependsOn || '').includes(created.a.id), '乙應依賴甲');
 });
+
+test('(l) 回修迴圈:審查連續 FAIL 超過上限 → 詳情頁出現三個選項,「忽略並完成」可結案', { skip: skipMsg }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-loop-'));
+  fs.writeFileSync(path.join(dir, 'fake-control.json'), JSON.stringify({ verdicts: ['FAIL'] })); // 審查永遠 FAIL
+  const post = (p, body) => fetch(`${baseUrl}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post('/api/projects', { id: 'loop-proj', name: 'loop', path: dir })).status, 200);
+    assert.equal((await post('/api/tasks', { id: 'task-loop-e2e', title: '回修迴圈任務', agent: 'claude', project: 'loop-proj', pipeline: 'standard', status: 'todo' })).status, 200);
+    assert.equal((await post('/api/dispatch', { id: 'task-loop-e2e' })).status, 200);
+    await page.navigate(baseUrl);
+    await page.waitFor(() => typeof window.openDetail === 'function');
+    await page.evaluate(() => { window.confirm = () => true; });
+    await page.evaluate(() => window.openDetail('task-loop-e2e'));
+    await page.waitFor('button[data-detail-action="approve"]', { timeout: 15000 });
+    await page.click('button[data-detail-action="approve"]');
+    // 連續 FAIL 超過 maxRevisions(3)後,停在 needs-you(revision-limit),出現三個選項
+    await page.waitFor('button[data-detail-action="complete"]', { timeout: 40000 });
+    const labels = await page.evaluate(() => [...document.querySelectorAll('#detailPage button[data-detail-action]')].map(b => b.dataset.detailAction));
+    for (const a of ['retry', 'complete', 'abort']) assert.ok(labels.includes(a), `回修上限時應有「${a}」選項,實際: ${labels}`);
+    const text = await page.evaluate(() => document.querySelector('#detailPage').textContent);
+    assert.ok(/回修|上限|revision/i.test(text), '應說明是回修達上限');
+    // 「忽略並完成」→ run 完成,未完成的步驟標為 waived
+    await page.click('button[data-detail-action="complete"]');
+    await page.waitFor(() => !document.querySelector('#detailPage button[data-detail-action="complete"]'), { timeout: 15000 });
+    const run = await (await fetch(`${baseUrl}/api/runs/task-loop-e2e`)).json();
+    assert.equal(run.run.status, 'completed');
+    assert.ok(run.run.steps.some(s => s.status === 'waived'), '強制完成時,未完成步驟應標為 waived');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
