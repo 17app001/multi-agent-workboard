@@ -9,6 +9,7 @@ import { readCodexQuota } from './quota.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 import * as engine from './engine.mjs';
 import { buildBriefing, buildWrapUp, writeWrapUp } from './session.mjs';
+import { parseDecomposition, createTasksFromDraft, parseDependsOn, findUnfinishedDependencies } from './decompose.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
@@ -44,7 +45,7 @@ function save(t) {
   // 的舊任務憑空多出一行空的 `files: `。
   const fields = ['title', 'status', 'agent', 'priority'];
   if (meta.model) fields.push('model');
-  for (const k of ['files', 'project', 'pipeline', 'goal', 'acceptance']) if (meta[k]) fields.push(k);
+  for (const k of ['files', 'project', 'pipeline', 'goal', 'acceptance', 'dependsOn']) if (meta[k]) fields.push(k);
   fields.push('updated');
   const fm = fields.map(k => `${k}: ${oneLine(meta[k] ?? '')}`).join('\n');
   fs.writeFileSync(path.join(tasksDir, id + '.md'), `---\n${fm}\n---\n${body}`);
@@ -311,6 +312,13 @@ http.createServer(async (req, res) => {
               conflict,
             });
           }
+          const depConflict = findUnfinishedDependencies(id, parseDependsOn(task.dependsOn), tasksDir, parse);
+          if (depConflict) {
+            return send(res, 409, {
+              error: `依賴尚未完成:「${task.title}」依賴的前置任務「${depConflict.title}」(${depConflict.id}) 狀態為 ${depConflict.status}。要照樣派工請帶 force。`,
+              dependencyConflict: depConflict,
+            });
+          }
         }
       }
       try {
@@ -375,9 +383,91 @@ http.createServer(async (req, res) => {
       const file = path.join(tasksDir, id + '.md');
       const cur = fs.existsSync(file) ? parse(id + '.md') : { id, title: 'Untitled', status: 'backlog', agent: '', priority: 'p1', body: '\n\n## Log\n' };
       const next = { ...cur };
-      for (const k of ['title', 'status', 'agent', 'priority', 'model', 'files', 'project', 'pipeline', 'goal', 'acceptance']) if (b[k] !== undefined) next[k] = oneLine(b[k]);
+      for (const k of ['title', 'status', 'agent', 'priority', 'model', 'files', 'project', 'pipeline', 'goal', 'acceptance', 'dependsOn']) if (b[k] !== undefined) next[k] = oneLine(b[k]);
       save(next);
       return send(res, 200, view(parse(id + '.md')));
+    }
+    // --- 需求自動拆解 (WP14) ---
+    if (url.pathname === '/api/decompose' && req.method === 'POST') {
+      const b = await readBody(req);
+      const reqText = String(b.requirement || '').trim();
+      if (!reqText || reqText.length < 3) return send(res, 400, { error: '請輸入需求內容（至少 3 字元）' });
+      if (reqText.length > 5000) return send(res, 400, { error: '需求內容過長（上限 5000 字元）' });
+      const projId = b.project ? String(b.project).trim() : '';
+      if (projId) {
+        const p = listProjects().find(x => x.id === projId);
+        if (!p) return send(res, 400, { error: `專案「${projId}」不存在` });
+        if (!p.valid) return send(res, 400, { error: `專案「${projId}」路徑無效` });
+      }
+      const agentId = b.agent ? String(b.agent).trim() : 'claude';
+      const agents = cfg().agents || [];
+      const pools = cfg().pools || {};
+      const agentObj = agents.find(a => a.id === agentId);
+      const poolMembers = pools[agentId];
+      if (!agentObj && !poolMembers) return send(res, 400, { error: `未知 agent「${agentId}」` });
+      if (agentObj && agentObj.enabled === false) return send(res, 400, { error: `agent「${agentId}」已停用` });
+
+      const taskId = 'task-decomp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+      const firstLine = reqText.split('\n')[0].slice(0, 40).trim();
+      const title = `需求拆解: ${firstLine || taskId}`;
+      const t = {
+        id: taskId,
+        title,
+        status: 'todo',
+        agent: agentId,
+        priority: 'p1',
+        pipeline: 'decompose',
+        project: projId,
+        model: b.model ? String(b.model).trim() : '',
+        goal: reqText,
+        acceptance: '產出 decomposition.json 任務拆解草案',
+        body: `\n\n## 需求描述\n${reqText}\n\n## Log\n`,
+      };
+      save(t);
+      try {
+        const r = engine.startRun(taskId);
+        return send(res, 200, { ok: true, taskId, ...r });
+      } catch (e) {
+        return send(res, e.status || 500, { error: e.message });
+      }
+    }
+    const mDecompDraft = url.pathname.match(/^\/api\/decompose\/([\w-]+)\/draft$/);
+    if (mDecompDraft && req.method === 'GET') {
+      const taskId = mDecompDraft[1];
+      let raw = '';
+      try {
+        raw = engine.readArtifactFile(taskId, 'decomposition.json');
+      } catch (e) {
+        return send(res, 404, { error: '尚未產生 decomposition.json 成品: ' + e.message });
+      }
+      try {
+        const draft = parseDecomposition(raw, cfg().agents, cfg().pools);
+        return send(res, 200, { ok: true, taskId, draft, rawText: raw });
+      } catch (e) {
+        return send(res, 422, { error: '草案解析失敗: ' + e.message, rawText: raw });
+      }
+    }
+    const mDecompConfirm = url.pathname.match(/^\/api\/decompose\/([\w-]+)\/confirm$/);
+    if (mDecompConfirm && req.method === 'POST') {
+      const taskId = mDecompConfirm[1];
+      const b = await readBody(req);
+      const items = b.tasks || b.draft;
+      if (!Array.isArray(items) || items.length === 0) {
+        return send(res, 400, { error: '請提供要建立的任務清單' });
+      }
+      let created = [];
+      try {
+        created = createTasksFromDraft(items, b.project || '', { agents: cfg().agents, pools: cfg().pools, tasksDir });
+      } catch (e) {
+        return send(res, e.status || 400, { error: e.message });
+      }
+      const detail = engine.runDetail(taskId);
+      if (detail?.run?.status === 'needs-you' && detail.run.needsYou?.reason === 'approval') {
+        try {
+          engine.approve(taskId, '已確認草案並建立 ' + created.length + ' 張任務卡');
+        } catch {}
+      }
+      return send(res, 200, { ok: true, createdCount: created.length, createdTasks: created });
     }
     // --- v2.1 run 引擎 API ---
     if (url.pathname === '/api/pipelines' && req.method === 'GET') return send(res, 200, engine.listPipelines());

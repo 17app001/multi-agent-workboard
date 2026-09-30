@@ -14,7 +14,7 @@ const indexSrc = fs.readFileSync(path.join(repo, 'web/index.html'), 'utf8');
 const detailSrc = fs.readFileSync(path.join(repo, 'web/detail.js'), 'utf8');
 
 const ctx = vm.createContext({});
-vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml };', ctx);
+vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml, decomposeDraftTableHtml };', ctx);
 const R = ctx.api;
 const detailCtx = vm.createContext({ Date, Object });
 vm.runInContext(detailSrc + '\n;this.api = { detailHtml, detailEsc };', detailCtx);
@@ -155,13 +155,29 @@ test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄
   // 所有 innerHTML 賦值都必須來自 render.js 的樣板函式或固定字串
   const inner = [...indexSrc.matchAll(/innerHTML\s*=\s*([^;\n]+)/g)].map(m => m[1].trim());
   assert.ok(inner.length >= 4);
-  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|projectFilterOptionsHtml|agentOptionsHtml|modelOptionsHtml|usageSummaryHtml|agentsListHtml|tasksPaneHtml|needsYouPinnedHtml|activityListHtml|bigCounterOverlayHtml|usageData\.map\(usageCardHtml\)|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
+  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|projectFilterOptionsHtml|agentOptionsHtml|modelOptionsHtml|usageSummaryHtml|agentsListHtml|tasksPaneHtml|needsYouPinnedHtml|activityListHtml|bigCounterOverlayHtml|usageData\.map\(usageCardHtml\)|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml|decomposeDraftTableHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
   // index.html 的內嵌腳本語法正確,且所有 fetch 都經過帶 JSON content-type 的 api()
   const scripts = [...indexSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   assert.equal(scripts.length, 1);
   new vm.Script(scripts[0]); // 語法檢查(不執行)
   assert.equal([...scripts[0].matchAll(/\bfetch\(/g)].length, 1, '只有 api() 自己呼叫 fetch');
   assert.match(scripts[0], /headers:\{'content-type':'application\/json'/);
+});
+
+test('WP14 拆解草案表格樣板 XSS 防護與 escape 安全性', () => {
+  const evilDraft = [{
+    title: EVIL,
+    goal: EVIL,
+    acceptance: EVIL,
+    files: EVIL,
+    agentSuggestion: EVIL,
+    dependsOn: [0],
+  }];
+  const html = R.decomposeDraftTableHtml(evilDraft, cfg);
+  assertSafe(html, 'decomposeDraftTable');
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.match(html, /data-draft-row="0"/);
+  assert.match(html, /data-field="title"/);
 });
 
 test('Codex quota card escapes API data and renders warning, stale, and missing states', () => {

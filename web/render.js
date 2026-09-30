@@ -83,6 +83,7 @@ function taskCardHtml(t, cfg, projects, runStatus) {
  ${t.goal ? `<div class=mut>🎯 ${esc(t.goal)}</div>` : ''}
  ${t.model ? `<div class=mut>Model: ${esc(t.model)}</div>` : ''}
  ${t.files ? `<div class=mut>📁 ${esc(t.files)}</div>` : ''}
+ ${t.dependsOn ? `<div class=mut>🔗 依賴: ${esc(t.dependsOn)}</div>` : ''}
  <div class=row>${isNeedsYou ? `<button class=primary data-detail="${esc(t.id)}">審查 / 處理</button>` : ''}
  ${t.agent && t.status != 'done' && !isRunning ? `<button data-run="${esc(t.id)}">▶ 派工</button>` : ''}
  ${isRunning ? `<button class="iconbtn stop" data-stop="${esc(t.id)}">■ 停止</button>` : ''}
@@ -259,4 +260,28 @@ function projectOptionsHtml(projects) {
 
 function projectRowHtml(p) {
   return `<div class=row><span><b>${esc(p.name || p.id)}</b> <span class=mut>${esc(p.id)}${p.path ? ' · ' + esc(p.path) : ''}</span> ${p.valid ? '' : `<span class=warn>⚠ ${p.error ? esc(p.error) : '路徑失效'}</span>`}</span><button class="iconbtn danger" data-pdel="${esc(p.id)}">🗑 刪除</button></div>`;
+}
+
+function decomposeDraftTableHtml(draft = [], cfg = { agents: [] }) {
+  if (!Array.isArray(draft) || draft.length === 0) {
+    return '<div class="mut empty-state"><p>尚無拆解草案資料。請點擊「＋新增任務卡」手動建立或重新產生。</p></div>';
+  }
+  const agents = cfg?.agents || [];
+  const rows = draft.map((item, idx) => {
+    const depsStr = Array.isArray(item.dependsOn) ? item.dependsOn.join(', ') : String(item.dependsOn || '');
+    return `<tr data-draft-row="${esc(idx)}">
+      <td class=mut>#${esc(idx + 1)}</td>
+      <td><input class=draft-title data-field="title" data-idx="${esc(idx)}" value="${esc(item.title || '')}" placeholder="任務標題" required></td>
+      <td><textarea class=draft-goal data-field="goal" data-idx="${esc(idx)}" rows=2 placeholder="目標">${esc(item.goal || '')}</textarea></td>
+      <td><textarea class=draft-acc data-field="acceptance" data-idx="${esc(idx)}" rows=2 placeholder="驗收條件">${esc(item.acceptance || '')}</textarea></td>
+      <td><input class=draft-files data-field="files" data-idx="${esc(idx)}" value="${esc(item.files || '')}" placeholder="預計動到檔案"></td>
+      <td><select class=draft-agent data-field="agentSuggestion" data-idx="${esc(idx)}"><option value="">(未指派)</option>${agents.map(a => `<option value="${esc(a.id)}"${a.id === item.agentSuggestion ? ' selected' : ''}>${esc(a.label || a.id)}</option>`).join('')}</select></td>
+      <td><input class=draft-deps data-field="dependsOn" data-idx="${esc(idx)}" value="${esc(depsStr)}" placeholder="例如: 0"></td>
+      <td><button type=button class="iconbtn danger" data-draft-del="${esc(idx)}">🗑 刪除</button></td>
+    </tr>`;
+  }).join('');
+
+  return `<div class=draft-table-wrap><table class=draft-table><thead><tr>
+    <th>#</th><th>標題</th><th>目標</th><th>驗收條件</th><th>預計動用檔案</th><th>建議 Agent</th><th>依賴項 (0-based)</th><th>操作</th>
+  </tr></thead><tbody>${rows}</tbody></table><div class=row style="margin-top:10px"><button type=button class=iconbtn data-draft-add>＋ 新增任務卡</button></div></div>`;
 }

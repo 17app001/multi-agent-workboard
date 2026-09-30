@@ -63,6 +63,11 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
 .form input,.form textarea{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
 .plist{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;overflow:auto}
 .plist .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.draft-table-wrap{overflow-x:auto;margin:10px 0}
+.draft-table{width:100%;border-collapse:collapse;font-size:12px}
+.draft-table th,.draft-table td{border:1px solid var(--line);padding:6px;vertical-align:top}
+.draft-table th{background:var(--bg);color:var(--mut);text-align:left}
+.draft-table input,.draft-table textarea,.draft-table select{width:100%;box-sizing:border-box;font:inherit;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 5px}
 .detail-page{max-width:1000px;margin:auto}.detail-page[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h2{font-size:20px;color:var(--fg);margin:10px 0 4px;text-transform:none}.detail-section{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;margin:12px 0;box-shadow:var(--shadow)}.detail-section h3{margin:0 0 10px;font-size:14px}.steps{margin:0;padding-left:22px}.step{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}.step:last-child{border:0}.step-running{color:var(--accent-hover)}.step-done{color:var(--accent2)}.step-failed{color:var(--danger)}.event{padding:7px 0;border-bottom:1px solid var(--line);white-space:pre-wrap}.event:last-child{border:0}.artifacts article{margin:8px 0}.artifacts pre,.raw{max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);padding:10px;border:1px solid var(--line);border-radius:8px}.detail-section textarea{width:100%;box-sizing:border-box;min-height:64px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px}
 /* WP5 新增樣式:控制中心三區、置頂、巨幕提示、Toast、狀態燈 */
 .dashboard-grid{display:grid;grid-template-columns:260px 1fr 310px;gap:14px;align-items:start}
@@ -126,6 +131,7 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
   </div>
   <div class=topbar-actions>
     <label class=filter-label>專案: <select id=projectFilter></select></label>
+    <button id=decomposeBtn class=primary>🧩 需求拆解</button>
     <button id=add class=primary>+ 新任務</button>
     <button id=sessionBriefing>開工</button>
     <button id=sessionWrapup>收工</button>
@@ -177,6 +183,28 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
   <div class=modalbox>
     <div class=modalhead><b id=logTitle>Log</b><span class=mut id=logMeta></span><button id=logClose>✕ 關閉</button></div>
     <pre id=logContent></pre>
+  </div>
+</div>
+
+<div class=modal id=decomposeModal hidden>
+  <div class=modalbox style="width:min(920px,100%)">
+    <div class=modalhead><b id=decomposeTitle>🧩 需求自動拆解</b><button id=decomposeClose>✕ 關閉</button></div>
+    <div id=decomposeInputStep class=form>
+      <label>專案<select id=dProject></select></label>
+      <label>規劃者 Agent<select id=dAgent></select></label>
+      <label>Model<select id=dModel></select></label>
+      <label>需求描述 (請詳述欲達成的功能或重構目標)<textarea id=dRequirement rows=6 placeholder="例如: 為 TodoApp 新增標籤分類與關鍵字搜尋功能，包含後端 API、資料庫存檔與前端篩選介面..."></textarea></label>
+      <div class=row><button id=dStart class=primary>開始拆解</button></div>
+    </div>
+    <div id=decomposeDraftStep hidden>
+      <div id=decomposeStatus class=mut style="margin-bottom:8px"></div>
+      <div id=decomposeDraftArea></div>
+      <details id=decomposeRawWrap style="margin-top:10px"><summary class=mut>檢視原始輸出 (JSON)</summary><pre id=decomposeRawText class=raw></pre></details>
+      <div class=row style="margin-top:12px;justify-content:flex-end;gap:8px">
+        <button id=decomposeBackBtn class=iconbtn>← 返回修改需求</button>
+        <button id=decomposeConfirmBtn class=primary>確認建立任務卡</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -232,6 +260,7 @@ let openDetailId=null,detailData=null,detailEvents=[],detailArtifacts={},detailR
 let currentView='dashboard',selectedProject='',activeTaskTab='needs-you',isPinnedExpanded=true;
 let activityEvents=[],activeAgents=[],cooldowns={},usageData=[],quotaData=[];
 let showOldDone=false;
+let currentDecomposeTaskId=null,currentDecomposeDraft=[],currentDecomposeProject='',decomposePollInterval=null;
 try{showOldDone=localStorage.getItem('workboard_show_old_done')==='true'}catch(e){}
 if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
 
@@ -398,8 +427,25 @@ document.addEventListener('click',async e=>{
  if(detailId){openDetail(detailId);$('#bigCounterModal').hidden=true;return}
  if(e.target.dataset?.artifact&&openDetailId){const name=e.target.dataset.artifact;try{detailArtifacts[name]=await api('runs/'+encodeURIComponent(openDetailId)+'/artifacts/'+encodeURIComponent(name),{},true);paintDetail()}catch(err){showToast(err.message,'error')}return}
  if(e.target.dataset?.detailAction&&openDetailId){const action=e.target.dataset.detailAction;let endpoint=action,body={};if(action==='reject'){const feedback=$('[data-approval-note]')?.value.trim();if(!feedback){showToast('退回必須填寫具體意見','error');$('[data-approval-note]')?.focus();return}body={feedback}}else if(action==='approve')body={note:$('[data-approval-note]')?.value.trim()||''};else if(['retry','complete','abort'].includes(action)){endpoint='resolve';body={action}}try{const r=await api('runs/'+encodeURIComponent(openDetailId)+'/'+endpoint,{method:'POST',body:JSON.stringify(body)});if(r.error)showToast(r.error,'error');else showToast('操作已執行','info');await loadDetail();startDetailStream();load()}catch(err){showToast(err.message,'error')}return}
+ if(e.target.dataset?.draftAction==='add-row'||e.target.closest('[data-draft-add]')){
+  collectDraftFromDom();
+  currentDecomposeDraft.push({title:'新任務',goal:'',acceptance:'',files:'',agentSuggestion:'',dependsOn:[]});
+  $('#decomposeDraftArea').innerHTML=decomposeDraftTableHtml(currentDecomposeDraft,cfg);
+  return;
+ }
+ if(e.target.dataset?.draftDel!==undefined){
+  const idx=Number(e.target.dataset.draftDel);
+  collectDraftFromDom();
+  currentDecomposeDraft.splice(idx,1);
+  $('#decomposeDraftArea').innerHTML=decomposeDraftTableHtml(currentDecomposeDraft,cfg);
+  return;
+ }
+ if(e.target.dataset?.openDecomposeDraft){
+  openDecomposeModal(e.target.dataset.openDecomposeDraft);
+  return;
+ }
  if(run){const dispatchNow=async force=>{const body=force?{id:run,force:true}:{id:run};const r=await api('dispatch',{method:'POST',body:JSON.stringify(body)});
-  if(r.conflict){if(confirm(r.error+'\n\n仍要繼續派工嗎?'))await dispatchNow(true);return}
+  if(r.conflict||r.dependencyConflict){if(confirm(r.error+'\n\n仍要繼續派工嗎?'))await dispatchNow(true);return}
   if(r.error){showToast(r.error,'error')}else{showToast('已派工任務: '+run,'info');await load();openLog(run)}};
   await dispatchNow(false);return}
  if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)showToast(r.error,'error');else showToast('行程已終止','info');await load();await refreshActive();return}
@@ -420,6 +466,7 @@ document.addEventListener('keydown',e=>{
   else if(!$('#taskModal').hidden)$('#taskModal').hidden=true;
   else if(!$('#projModal').hidden)$('#projModal').hidden=true;
   else if(!$('#sessionModal').hidden)$('#sessionModal').hidden=true;
+  else if(!$('#decomposeModal').hidden){if(decomposePollInterval)clearInterval(decomposePollInterval);$('#decomposeModal').hidden=true;}
  }
 });
 
@@ -440,6 +487,131 @@ $('#projSave').onclick=async()=>{const id=$('#pId').value.trim(),name=$('#pName'
  if(!id||!path){showToast('請填寫專案 ID 與路徑','error');return}
  const r=await api('projects',{method:'POST',body:JSON.stringify({id,name,path})});
  if(r.error){showToast(r.error,'error');return}showToast('專案建立成功','info');['#pId','#pName','#pPath'].forEach(s=>$(s).value='');await load();paintProjects()};
+
+function collectDraftFromDom(){
+ const rows=$$('#decomposeDraftArea [data-draft-row]');
+ if(!rows.length)return;
+ const updated=[];
+ rows.forEach((row,i)=>{
+  const title=row.querySelector('.draft-title')?.value.trim()||'';
+  const goal=row.querySelector('.draft-goal')?.value.trim()||'';
+  const acceptance=row.querySelector('.draft-acc')?.value.trim()||'';
+  const files=row.querySelector('.draft-files')?.value.trim()||'';
+  const agentSuggestion=row.querySelector('.draft-agent')?.value.trim()||'';
+  const depsStr=row.querySelector('.draft-deps')?.value.trim()||'';
+  const dependsOn=depsStr.split(',').map(s=>Number(s.trim())).filter(n=>Number.isInteger(n));
+  updated.push({index:i,title,goal,acceptance,files,agentSuggestion,dependsOn});
+ });
+ currentDecomposeDraft=updated;
+}
+
+async function refreshDecomposeModels(){
+ const agent=$('#dAgent').value;
+ if(!agent){$('#dModel').innerHTML=modelOptionsHtml([]);return}
+ try{const r=await api('agents/'+encodeURIComponent(agent)+'/models');$('#dModel').innerHTML=modelOptionsHtml(r.models||[])}
+ catch(e){$('#dModel').innerHTML=modelOptionsHtml([])}
+}
+
+async function loadDecomposeDraft(taskId){
+ $('#decomposeInputStep').hidden=true;
+ $('#decomposeDraftStep').hidden=false;
+ $('#decomposeStatus').textContent='讀取拆解草案中...';
+ try{
+  const r=await api('decompose/'+encodeURIComponent(taskId)+'/draft');
+  if(r.draft){
+   currentDecomposeDraft=r.draft;
+   $('#decomposeStatus').textContent='已產出任務拆解草案（共 '+r.draft.length+' 張）。你可以直接在下方表格修改、指派 Agent 或調整依賴：';
+   $('#decomposeDraftArea').innerHTML=decomposeDraftTableHtml(currentDecomposeDraft,cfg);
+   $('#decomposeRawText').textContent=r.rawText||'';
+   $('#decomposeConfirmBtn').disabled=false;
+  }else{
+   $('#decomposeStatus').textContent='取得草案失敗: '+(r.error||'未知錯誤');
+   $('#decomposeRawText').textContent=r.rawText||'';
+  }
+ }catch(err){
+  $('#decomposeStatus').textContent='取得草案失敗: '+err.message;
+ }
+}
+
+async function startDecompose(){
+ const reqText=$('#dRequirement').value.trim();
+ if(!reqText||reqText.length<3){showToast('請詳述需求內容（至少 3 字元）','error');$('#dRequirement').focus();return}
+ const proj=$('#dProject').value,agent=$('#dAgent').value,model=$('#dModel').value;
+ try{
+  const r=await api('decompose',{method:'POST',body:JSON.stringify({requirement:reqText,project:proj,agent,model})});
+  if(r.error){showToast(r.error,'error');return}
+  currentDecomposeTaskId=r.taskId;
+  currentDecomposeProject=proj;
+  $('#decomposeInputStep').hidden=true;
+  $('#decomposeDraftStep').hidden=false;
+  $('#decomposeStatus').textContent='規劃者正在分析並拆解需求中，請稍候（可關閉此視窗，完成後會在「待你處理」提醒）...';
+  $('#decomposeDraftArea').innerHTML=decomposeDraftTableHtml([],cfg);
+  $('#decomposeConfirmBtn').disabled=true;
+  if(decomposePollInterval)clearInterval(decomposePollInterval);
+  decomposePollInterval=setInterval(async()=>{
+   try{
+    const d=await api('runs/'+encodeURIComponent(currentDecomposeTaskId));
+    const st=d?.run?.status;
+    if(st==='needs-you'||st==='completed'){
+     clearInterval(decomposePollInterval);
+     decomposePollInterval=null;
+     await loadDecomposeDraft(currentDecomposeTaskId);
+     load();
+    }else if(st==='failed'||st==='cancelled'){
+     clearInterval(decomposePollInterval);
+     decomposePollInterval=null;
+     $('#decomposeStatus').textContent='拆解任務已終止: '+(d?.run?.error||st);
+    }
+   }catch(e){}
+  },2000);
+ }catch(err){showToast(err.message,'error')}
+}
+
+function openDecomposeModal(taskId=null){
+ if(decomposePollInterval)clearInterval(decomposePollInterval);
+ if(taskId){
+  currentDecomposeTaskId=taskId;
+  const t=tasks.find(x=>x.id===taskId);
+  currentDecomposeProject=t?.project||'';
+  $('#decomposeModal').hidden=false;
+  loadDecomposeDraft(taskId);
+ }else{
+  currentDecomposeTaskId=null;
+  currentDecomposeDraft=[];
+  $('#decomposeInputStep').hidden=false;
+  $('#decomposeDraftStep').hidden=true;
+  $('#dRequirement').value='';
+  $('#dProject').innerHTML=projectOptionsHtml(projects);
+  if(selectedProject)$('#dProject').value=selectedProject;
+  $('#dAgent').innerHTML=agentOptionsHtml(cfg.agents);
+  if(cfg.agents.some(a=>a.id==='claude'))$('#dAgent').value='claude';
+  refreshDecomposeModels();
+  $('#decomposeModal').hidden=false;
+  $('#dRequirement').focus();
+ }
+}
+
+async function confirmDecomposeDraft(){
+ collectDraftFromDom();
+ if(!currentDecomposeDraft.length){showToast('草案不可為空','error');return}
+ $('#decomposeConfirmBtn').disabled=true;
+ try{
+  const r=await api('decompose/'+encodeURIComponent(currentDecomposeTaskId)+'/confirm',{method:'POST',body:JSON.stringify({tasks:currentDecomposeDraft,project:currentDecomposeProject})});
+  if(r.error){showToast(r.error,'error');$('#decomposeConfirmBtn').disabled=false;return}
+  showToast('成功建立 '+r.createdCount+' 張任務卡','info');
+  if(decomposePollInterval)clearInterval(decomposePollInterval);
+  $('#decomposeModal').hidden=true;
+  if(openDetailId===currentDecomposeTaskId)closeDetail();
+  await load();
+ }catch(err){showToast(err.message,'error');$('#decomposeConfirmBtn').disabled=false}
+}
+
+$('#decomposeBtn').onclick=()=>openDecomposeModal();
+$('#decomposeClose').onclick=()=>{if(decomposePollInterval)clearInterval(decomposePollInterval);$('#decomposeModal').hidden=true;};
+$('#dStart').onclick=startDecompose;
+$('#dAgent').onchange=refreshDecomposeModels;
+$('#decomposeConfirmBtn').onclick=confirmDecomposeDraft;
+$('#decomposeBackBtn').onclick=()=>{if(decomposePollInterval)clearInterval(decomposePollInterval);$('#decomposeDraftStep').hidden=true;$('#decomposeInputStep').hidden=false;};
 
 $('#logClose').onclick=closeLog;
 $('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};

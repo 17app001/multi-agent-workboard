@@ -1,0 +1,14 @@
+{
+  "id": "decompose",
+  "description": "需求自動拆解:規劃者以唯讀模式分析大需求並產出任務拆解草案(JSON),由人工審查編輯後建立任務卡。",
+  "maxRevisions": 0,
+  "steps": [
+    {
+      "id": "decompose",
+      "agent": "@task",
+      "mode": "plan",
+      "output": "decomposition.json",
+      "gate": "human"
+    }
+  ]
+}
