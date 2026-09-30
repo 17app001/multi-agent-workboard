@@ -27,7 +27,15 @@
 - 額度:codex-b(Mika)5h 已用約 58%(13:27 重置)。
 - 剩餘:WP5、WP6、WP7、WP8、WP13(看板顯示 codex 額度%)。
 
-## 使用者已選定的下一批(2026-09-30 晚)
+## 2026-09-30 深夜收工狀態(最新,以此為準)
+- **已完成並 push**:WP1–5、WP7、WP9–16(含 WP5 首頁重做/通知置頂/中文化/完成卡收起、WP13 codex 額度顯示與提前換手、WP14 需求自動拆解、WP15 CDP 瀏覽器 e2e、WP16 修 flaky)。`npm test` 113/113、`npm run test:e2e` 6/6(真實 Chrome)。
+- **施工者分工實績**:Mika(codex-b)做 WP10/11/12/13/14/7/5;agy 做 WP15、WP16(開了全域 command(*) 期間);Claude 只審查與複核。
+- **agy 全域權限已用 `tools/agy-permissions.mjs off` 還原**;再用 agy 施工前需使用者自己執行 `on`。
+- **看板上有兩個等核准的 run(使用者從遠端派的,Claude 未動)**:WP6 worktree、WP8 任務用量(WP8 第一次用 gemini 失敗 exit 55,改 agy 後停在 plan 核准)。要用 agy 的話需先 `on`。這兩張卡在工作區有未 commit 的狀態改動(needs-you)。
+- 尚未做:commander 模板、WP6/WP8(已有 run 等核准)、開機自啟。**畫面仍建議使用者實測**(需求拆解、額度卡、回修介面尚無 e2e)。
+- 已知風險:各 agent 有 defaultModel 會明確傳旗標;claude/agy 的 quota 偵測仍只回 false。
+
+## 使用者已選定的下一批(2026-09-30 晚,已全數完成,僅留紀錄)
 選 1通知置頂、2首頁重做、3中文統一、4codex額度、6需求拆解、8回修介面、10瀏覽器自動化、11完成卡收起;由 Mika(codex-b)施工、Claude 審查。**施工順序(避免同時改 web/)**:WP5(含1/2/3/11)→ WP13(額度)→ WP7(回修介面)→ WP14(需求拆解)→ WP15(瀏覽器測試,CDP 零依賴)。任務卡皆已建立於 board/tasks/(backlog);一次只派一張,完成→Claude 複核→通過才派下一張。未選:commander 模板、worktree(WP6)、用量分析(WP8)、開機自啟。
 
 ## 待使用者決定 / 已知風險
