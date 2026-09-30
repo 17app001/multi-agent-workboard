@@ -845,6 +845,15 @@ test('agy 串流:result 沒有 response 時,依序串接所有 text_delta(不是
   assert.equal((await post(`/api/runs/${id}/stop`)).status, 200);
 });
 
+test('agy 沒有指令權限(headless 無回覆)→ needs-you permission,並給出可照做的開權限說明,而不是難懂的「沒有產生回覆文字」', async () => {
+  const id = 't-agy-denied';
+  await mkTask(id, { pipeline: 'agyflow', agent: 'claude', control: { agyDenied: true } });
+  await dispatch(id);
+  const run = await waitNeeds(id, 'permission');
+  assert.match(run.needsYou.message, /agy-permissions.mjs on/);
+  assert.equal((await post(`/api/runs/${id}/stop`)).status, 200);
+});
+
 // ------------------------------------------------------------------ 耐久性(審查 #6)
 test('run.json 用暫存檔 + rename 原子寫入:完成的 run 目錄沒有殘留暫存檔,run.json 是完整 JSON', async () => {
   const run = await getRun('t-full');

@@ -774,7 +774,14 @@ async function runAgentStep(ctx, idx, resume) {
   const out = { kind: 'done' };
   if (def.output) {
     const text = an.finalText;
-    if (!text) return { kind: 'failed', message: `agent 沒有產生可存成 ${def.output} 的回覆文字` };
+    if (!text) {
+      // agy 在 headless 模式下沒有權限設定時,會自動拒絕指令並「沒有任何回覆」地結束;
+      // 這時給使用者可照做的說明,而不是一句看不懂的「沒有產生回覆文字」。
+      if (/headless mode cannot prompt|required the "?command"? permission/i.test(rawSince(rawFile, st.rawStart) || '')) {
+        return { kind: 'needs-you', reason: 'permission', message: `${adapter.id || 'agent'} 因為沒有指令權限而無法工作(headless 模式沒人可以按核准)。請由你在終端機執行 node tools/agy-permissions.mjs on 開啟權限(用完記得 off 還原),然後在這裡按「重試」;或改派給其他 agent。` };
+      }
+      return { kind: 'failed', message: `agent 沒有產生可存成 ${def.output} 的回覆文字` };
+    }
     fs.writeFileSync(runPath(run.taskId, run.runId, 'artifacts', def.output), text);
     engineEv(ctx, def.id, 'message', `已存 artifact ${def.output}(${text.length} 字元)`, { phase: 'artifact', file: def.output });
     if (def.mode === 'review') {

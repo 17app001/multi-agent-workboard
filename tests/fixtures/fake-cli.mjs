@@ -37,6 +37,8 @@ const init = () => (flavor === 'claude'
   : flavor === 'agy' ? out({ event: 'init', conversation_id: 'c1', init: { permission_mode: 'request-review' } })
   : out({ type: 'thread.started', thread_id: 't1' }));
 const message = t => {
+  // control.agyDenied:模擬 agy headless 沒有指令權限時的真實行為——完全沒有回覆文字,只印一行說明
+  if (flavor === 'agy' && control.agyDenied) { process.stdout.write('jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for\n'); return; }
   if (flavor === 'agy') { // 切成 3 段 delta(在非空白處切,避免被 adapter 丟掉純空白 delta)
     const a = Math.ceil(t.length / 3), b = Math.ceil(t.length * 2 / 3);
     for (const piece of [t.slice(0, a), t.slice(a, b), t.slice(b)]) if (piece) out({ event: 'step_update', step_update: { step_type: 'agent_response', state: 'ACTIVE', text_delta: piece } });
@@ -47,7 +49,7 @@ const message = t => {
     : out({ type: 'item.completed', item: { type: 'agent_message', text: t } });
 };
 const end = (t, denied) => {
-  if (flavor === 'agy') return out({ event: 'result', result: control.agyNoResponse ? { status: 'SUCCESS' } : { status: 'SUCCESS', response: t } });
+  if (flavor === 'agy') return out({ event: 'result', result: (control.agyNoResponse || control.agyDenied) ? { status: 'SUCCESS' } : { status: 'SUCCESS', response: t } });
   if (flavor === 'claude') return out({ type: 'result', subtype: 'success', is_error: false, result: t, permission_denials: denied ? [{ tool_name: 'Bash' }] : [] });
   if (denied) out({ type: 'item.completed', item: { type: 'command_execution', status: 'declined', command: 'rm -rf x' } });
   return out({ type: 'turn.completed' });
