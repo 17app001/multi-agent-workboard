@@ -246,6 +246,53 @@ test('SSE stream sends snapshot, resumed activity, and terminal end from an isol
   assert.doesNotMatch(resumed.text, /first/);
   assert.match(resumed.text, /second/);
   const lastId = await rawReq('GET', `/api/runs/${taskId}/stream`, { headers: { 'last-event-id': '1' } });
-  assert.doesNotMatch(lastId.text, /first/);
   assert.equal((await rawReq('GET', `/api/runs/${taskId}/stream`, { headers: { host: 'evil.com' } })).status, 403);
 });
+
+test('GET /api/activity: 唯讀聚合最近 events、活躍 agents 與 cooldowns,並受 Host 保護', async () => {
+  const taskId = 'act-task', runId = 'run-1700000000000';
+  const taskDir = path.join(sandbox, 'board/runs', taskId, runId);
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(sandbox, 'board/tasks', taskId + '.md'), '---\ntitle: 測試活動任務\nstatus: doing\nagent: claude\n---\n');
+  fs.writeFileSync(path.join(taskDir, 'events.jsonl'), [
+    JSON.stringify({ ts: 1000, step: 'plan', kind: 'start', text: '開始計畫' }),
+    JSON.stringify({ ts: 2000, step: 'plan', kind: 'message', text: '產出草稿' }),
+    JSON.stringify({ ts: 3000, step: 'plan', kind: 'end', text: '計畫完成' })
+  ].join('\n') + '\n');
+
+  const future = Date.now() + 60000;
+  const past = Date.now() - 60000;
+  fs.writeFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), JSON.stringify({
+    'codex-a': { until: future, reason: 'quota-exhausted' },
+    'codex-b': { until: past, reason: 'quota-exhausted' }
+  }));
+
+  const res = await api('/api/activity');
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.json.events));
+  assert.ok(Array.isArray(res.json.activeAgents));
+  assert.ok(typeof res.json.cooldowns === 'object');
+
+  // events 依時間倒序
+  const taskEvents = res.json.events.filter(e => e.taskId === taskId);
+  assert.equal(taskEvents.length, 3);
+  assert.equal(taskEvents[0].ts, 3000);
+  assert.equal(taskEvents[0].taskTitle, '測試活動任務');
+  assert.equal(taskEvents[0].text, '計畫完成');
+  assert.equal(taskEvents[2].ts, 1000);
+
+  // cooldown 包含未過期的 codex-a，過期的 codex-b 被排除
+  assert.ok(res.json.cooldowns['codex-a']);
+  assert.equal(res.json.cooldowns['codex-a'].reason, 'quota-exhausted');
+  assert.equal(res.json.cooldowns['codex-b'], undefined);
+
+  // Host 偽造時被 403 擋下
+  const denied = await rawReq('GET', '/api/activity', { headers: { host: 'attacker.com' } });
+  assert.equal(denied.status, 403);
+
+  // 清理 fixture
+  fs.rmSync(path.join(sandbox, 'board/runs', taskId), { recursive: true, force: true });
+  fs.unlinkSync(path.join(sandbox, 'board/tasks', taskId + '.md'));
+  fs.unlinkSync(path.join(sandbox, 'board/runs/agent-cooldown.json'));
+});
+

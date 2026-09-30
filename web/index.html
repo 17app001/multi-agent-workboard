@@ -4,7 +4,14 @@
 :root{--bg:#F7F1E8;--card:#FDFBF7;--fg:#3A332C;--mut:#8A8072;--line:#E8DFD1;--accent:#C97B4A;--accent-hover:#B5693B;--accent2:#6E9B93;--danger:#B5564A;--shadow:0 2px 8px rgba(60,50,40,.08)}
 @media(prefers-color-scheme:dark){:root{--bg:#2A241C;--card:#372F24;--fg:#F0E9DC;--mut:#B8AD9A;--line:#4A4030;--shadow:0 2px 10px rgba(0,0,0,.35)}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px -apple-system,"Segoe UI","Noto Sans TC",sans-serif;padding:16px}
-h1{font-size:18px;margin:0 0 14px;font-weight:600}h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;margin:22px 0 10px}
+h1{font-size:18px;margin:0;font-weight:600}h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;margin:22px 0 10px}h3{margin:0 0 10px;font-size:13px;color:var(--mut);font-weight:600}
+.topbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.topbar-left{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.topbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.view-nav{display:inline-flex;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:2px}
+.nav-btn{border:none;background:transparent;box-shadow:none;padding:5px 12px;border-radius:8px;font-weight:500;color:var(--mut);cursor:pointer}
+.nav-btn:hover{color:var(--fg)}
+.nav-btn.active{background:var(--card);color:var(--fg);box-shadow:var(--shadow);font-weight:600}
 .usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;box-shadow:var(--shadow)}
 .big{font-size:20px;font-weight:600}.mut{color:var(--mut);font-size:12px}
@@ -14,7 +21,7 @@ h1{font-size:18px;margin:0 0 14px;font-weight:600}h2{font-size:13px;color:var(--
 .card,.card *{overflow-wrap:anywhere;word-break:break-word}
 .card .mut{white-space:normal}
 .col{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:8px;min-height:120px}
-.col h3{font-size:12px;margin:4px 6px 10px;color:var(--mut);font-weight:600}
+.col h3{font-size:12px;margin:4px 6px 10px;color:var(--mut);font-weight:600;display:flex;justify-content:space-between;align-items:center}
 .col[data-c=backlog]{background:#FAF6EF}
 .col[data-c=todo]{background:#FCF3D9}
 .col[data-c=doing]{background:#E8F0F3}
@@ -33,8 +40,8 @@ select{font:inherit;background:var(--card);color:var(--fg);border:1px solid var(
 .p0{border-left:4px solid var(--accent)}.p1{border-left:4px solid var(--accent2)}.p2{border-left:4px solid #D8CBA0}
 button{font:inherit;padding:5px 12px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;box-shadow:var(--shadow)}
 button:hover{border-color:var(--accent)}
-button#add,button[data-run]{background:var(--accent);color:#fff;border-color:var(--accent)}
-button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+button#add,button[data-run],button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .t{display:flex;flex-direction:column;gap:4px}
 .t .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .badge{font-size:11px;font-weight:600;padding:2px 9px 2px 7px;border-radius:99px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
@@ -44,7 +51,7 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .iconbtn{padding:2px 8px;font-size:12px;line-height:1.4}
 .iconbtn.danger:hover{border-color:var(--danger);color:var(--danger)}
 .iconbtn.stop:hover{border-color:var(--danger);color:var(--danger)}
-.modal{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:900}
 .modal[hidden]{display:none}
 .modalbox{background:var(--card);width:min(760px,100%);max-height:82vh;display:flex;flex-direction:column;border-radius:14px;padding:14px;border:1px solid var(--line);box-shadow:var(--shadow)}
 .modalhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
@@ -57,44 +64,148 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .plist{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;overflow:auto}
 .plist .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .detail-page{max-width:1000px;margin:auto}.detail-page[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h2{font-size:20px;color:var(--fg);margin:10px 0 4px;text-transform:none}.detail-section{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;margin:12px 0;box-shadow:var(--shadow)}.detail-section h3{margin:0 0 10px;font-size:14px}.steps{margin:0;padding-left:22px}.step{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}.step:last-child{border:0}.step-running{color:var(--accent-hover)}.step-done{color:var(--accent2)}.step-failed{color:var(--danger)}.event{padding:7px 0;border-bottom:1px solid var(--line);white-space:pre-wrap}.event:last-child{border:0}.artifacts article{margin:8px 0}.artifacts pre,.raw{max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);padding:10px;border:1px solid var(--line);border-radius:8px}.detail-section textarea{width:100%;box-sizing:border-box;min-height:64px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px}
+/* WP5 新增樣式:控制中心三區、置頂、巨幕提示、Toast、狀態燈 */
+.dashboard-grid{display:grid;grid-template-columns:260px 1fr 310px;gap:14px;align-items:start}
+@media(max-width:1100px){.dashboard-grid{grid-template-columns:1fr}}
+.agents-pane,.tasks-pane,.activity-pane{min-width:0}
+.agents-list{display:flex;flex-direction:column;gap:8px}
+.agent-card{display:flex;flex-direction:column;gap:5px;padding:10px;border-left:3px solid transparent}
+.agent-card.is-running{border-left-color:var(--accent2)}
+.agent-lamp-wrap{margin-left:auto;font-size:12px;display:inline-flex;align-items:center;gap:4px}
+.agent-status-text{font-size:11px}
+.agent-activity{font-size:12px;margin-top:2px}
+.codex-quota{margin-top:4px;display:flex;align-items:center;gap:6px}
+@keyframes breathe{0%{opacity:.4;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}100%{opacity:.4;transform:scale(.92)}}
+.lamp-running{display:inline-block;animation:breathe 1.6s ease-in-out infinite}
+.usage-summary-bar{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-bottom:14px;font-size:13px}
+.task-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab-btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.tab-btn.active{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tab-toggle-bar{font-size:12px;margin-bottom:8px;color:var(--mut)}
+.tasks-grid{display:flex;flex-direction:column;gap:8px}
+.empty-state{text-align:center;padding:32px 16px}
+.pinned-needs-you{margin-bottom:14px;border:2px solid var(--danger);background:#FFF8F6;border-radius:12px;padding:12px}
+@media(prefers-color-scheme:dark){.pinned-needs-you{background:#3E2A28}}
+.pinned-needs-you.is-collapsed{padding:8px 12px}
+.pinned-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pinned-items{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.pinned-item{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.pinned-item-info{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.activity-timeline{display:flex;flex-direction:column;gap:8px;max-height:72vh;overflow-y:auto}
+.activity-item{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;cursor:pointer;transition:border-color .15s}
+.activity-item:hover{border-color:var(--accent)}
+.activity-meta{display:flex;align-items:center;gap:6px;font-size:11px;flex-wrap:wrap;margin-bottom:3px}
+.activity-time{font-family:ui-monospace,Consolas,monospace;color:var(--mut)}
+.activity-task{color:var(--fg)}
+.activity-desc{font-size:12px;line-height:1.4}
+.big-counter-box{background:var(--card);border:2px solid var(--accent);border-radius:20px;padding:36px;text-align:center;max-width:540px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.25);position:relative}
+.big-counter-number{font-size:80px;font-weight:800;color:var(--danger);line-height:1;margin:10px 0}
+.big-counter-label{font-size:24px;font-weight:700;margin-bottom:6px}
+.big-counter-list{margin-top:20px;max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;text-align:left}
+.big-counter-item{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center}
+.big-counter-close{position:absolute;top:14px;right:14px}
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{pointer-events:auto;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px 16px;box-shadow:var(--shadow);font-size:13px;opacity:0;transform:translateY(12px);transition:all .25s ease}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast-error{border-left:4px solid var(--danger);background:#FDF5F4}
+.toast-info{border-left:4px solid var(--accent);background:var(--card)}
+@media(prefers-color-scheme:dark){.toast-error{background:#3E2A28}}
 </style>
-<h1>Multi-Agent Workboard <button id=sessionBriefing>開工</button> <button id=sessionWrapup>收工</button> <button id=add>+ 新任務</button> <button id=projBtn>📂 專案</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
-<main id=boardPage><div class=usage id=usage></div>
-<h2>看板</h2><div class=cols id=cols></div></main>
+
+<header class=topbar>
+  <div class=topbar-left>
+    <h1>Multi-Agent Workboard</h1>
+    <nav class=view-nav>
+      <button id=navDashboard class="nav-btn active" data-view="dashboard">控制中心</button>
+      <button id=navBoard class=nav-btn data-view="board">看板視圖</button>
+      <button id=navAnalytics class=nav-btn data-view="analytics">用量統計</button>
+    </nav>
+  </div>
+  <div class=topbar-actions>
+    <label class=filter-label>專案: <select id=projectFilter></select></label>
+    <button id=add class=primary>+ 新任務</button>
+    <button id=sessionBriefing>開工</button>
+    <button id=sessionWrapup>收工</button>
+    <button id=projBtn>📂 專案</button>
+    <button id=notifyBtn>🔔 開啟通知</button>
+  </div>
+</header>
+
+<div id=needsYouPinned></div>
+
+<main id=dashboardView>
+  <div id=usageSummaryBar></div>
+  <div class=dashboard-grid>
+    <aside id=agentsPane class=agents-pane>
+      <h3>Agent 狀態</h3>
+      <div id=agentsList class=agents-list></div>
+    </aside>
+    <section id=tasksPane class=tasks-pane>
+      <div class=task-tabs>
+        <button class="tab-btn active" data-tab="needs-you" id=tabNeedsYou>需要你處理 <span id=countNeedsYou class="badge b-failed">0</span></button>
+        <button class=tab-btn data-tab="running" id=tabRunning>執行中 <span id=countRunning class="badge b-running">0</span></button>
+        <button class=tab-btn data-tab="queued" id=tabQueued>排隊中 <span id=countQueued class=badge>0</span></button>
+        <button class=tab-btn data-tab="completed" id=tabCompleted>已完成 <span id=countCompleted class="badge b-exited">0</span></button>
+      </div>
+      <div id=tasksPaneContent></div>
+    </section>
+    <aside id=activityPane class=activity-pane>
+      <h3>活動動態</h3>
+      <div id=activityContent class=activity-timeline></div>
+    </aside>
+  </div>
+</main>
+
+<main id=boardPage hidden>
+  <div class=cols id=cols></div>
+</main>
+
+<main id=analyticsPage hidden>
+  <div class=usage id=usage></div>
+</main>
+
 <main class=detail-page id=detailPage hidden></main>
+
+<div class=modal id=bigCounterModal hidden>
+  <div id=bigCounterContent></div>
+</div>
+
 <div class=modal id=logModal hidden>
   <div class=modalbox>
     <div class=modalhead><b id=logTitle>Log</b><span class=mut id=logMeta></span><button id=logClose>✕ 關閉</button></div>
     <pre id=logContent></pre>
   </div>
 </div>
+
 <div class=modal id=taskModal hidden>
   <div class=modalbox>
     <div class=modalhead><b>新任務</b><button id=taskClose>✕ 關閉</button></div>
     <div class=form>
-      <label>標題<input id=fTitle></label>
+      <label>標題<input id=fTitle placeholder="簡短具體描述要執行的工作"></label>
       <label>Agent<select id=fAgent></select></label>
       <label>Model<select id=fModel></select></label>
       <label>專案<select id=fProject></select></label>
-      <label>目標(goal)<textarea id=fGoal rows=2></textarea></label>
-      <label>驗收條件(acceptance,用 ; 分隔)<textarea id=fAcc rows=2></textarea></label>
+      <label>目標(goal)<textarea id=fGoal rows=2 placeholder="完成此任務的最終期望產出"></textarea></label>
+      <label>驗收條件(acceptance,用 ; 分隔)<textarea id=fAcc rows=2 placeholder="項目 1; 項目 2"></textarea></label>
       <label>會動到的檔案(逗號分隔,可留空)<input id=fFiles placeholder="tools/usage.mjs,web/index.html"></label>
       <div class=row><button id=taskSave data-primary>建立</button></div>
     </div>
   </div>
 </div>
+
 <div class=modal id=projModal hidden>
   <div class=modalbox>
     <div class=modalhead><b>專案管理</b><button id=projClose>✕ 關閉</button></div>
     <div class=plist id=projList></div>
     <div class=form>
-      <label>id(英數、_、-)<input id=pId></label>
-      <label>名稱<input id=pName></label>
+      <label>id(英數、_、-)<input id=pId placeholder="例如: my-project"></label>
+      <label>名稱<input id=pName placeholder="例如: 我的專案"></label>
       <label>路徑(存在的絕對路徑)<input id=pPath placeholder="D:/MyProject/xxx"></label>
       <div class=row><button id=projSave>新增專案</button></div>
     </div>
   </div>
 </div>
+
 <div class=modal id=sessionModal hidden>
   <div class=modalbox>
     <div class=modalhead><b id=sessionTitle>工作階段</b><button id=sessionClose>✕ 關閉</button></div>
@@ -102,14 +213,33 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
     <div class=row><button id=sessionConfirm hidden>確認寫入</button></div>
   </div>
 </div>
+
+<div id=toastContainer class=toast-container></div>
+
 <script src=render.js></script>
 <script src=detail.js></script>
 <script src=session.js></script>
 <script>
 // 所有請求都帶 content-type: application/json(server 會拒絕非 JSON 的變更請求,擋 CSRF);esc/fmt/樣板在 render.js
-const $=s=>document.querySelector(s),api=(p,o={},text=false)=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>text?r.text():r.json());
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+const api=(p,o={},text=false)=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>text?r.text():r.json());
+
 let cfg,tasks=[],projects=[],runStatus={},openLogId=null,userStopping={};
 let openDetailId=null,detailData=null,detailEvents=[],detailArtifacts={},detailRaw='',detailSource=null,detailPoll=null,detailCursor=0;
+let currentView='dashboard',selectedProject='',activeTaskTab='needs-you',isPinnedExpanded=true;
+let activityEvents=[],activeAgents=[],cooldowns={},usageData=[];
+let showOldDone=false;
+try{showOldDone=localStorage.getItem('workboard_show_old_done')==='true'}catch(e){}
+if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
+
+function showToast(msg,type='info'){
+ const container=$('#toastContainer');if(!container)return;
+ const t=document.createElement('div');t.className='toast toast-'+type;t.textContent=msg;
+ container.appendChild(t);
+ setTimeout(()=>t.classList.add('show'),10);
+ setTimeout(()=>{t.classList.remove('show');setTimeout(()=>t.remove(),300)},4000);
+}
+
 function beep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
  o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(ctx.currentTime+.15);
  setTimeout(()=>{try{ctx.close()}catch(e){}},300)}catch(e){}}
@@ -120,73 +250,181 @@ function updateNotifyBtn(){const b=$('#notifyBtn');if(!b)return;
  if(Notification.permission==='granted'){b.textContent='🔔 通知已開啟';b.disabled=true}
  else if(Notification.permission==='denied'){b.textContent='🔔 通知已被封鎖';b.disabled=true}
  else{b.textContent='🔔 開啟完成通知';b.disabled=false}}
+
 function checkTaskTransitions(prevStatus){tasks.forEach(t=>{const was=prevStatus[t.id];
- if(was!==undefined&&was!=='review'&&t.status==='review')notify('任務已完成,待確認','『'+t.title+'』已完成,待確認')})}
+ if(was!==undefined&&was!=='review'&&t.status==='review')notify('需要你處理','『'+t.title+'』已完成並等待你的核准');
+ if(was!==undefined&&was!=='needs-you'&&t.state==='needs-you')notify('需要你處理','『'+t.title+'』需要你的指示或核准')})}
 function checkRunTransitions(prevRun){Object.keys(prevRun).forEach(id=>{const was=prevRun[id],now=runStatus[id]?.status;
  if(was!=='running')return;
  if(userStopping[id]){delete userStopping[id];return}
  const t=tasks.find(x=>x.id===id),title=t?t.title:id;
  if(now==='stopped')notify('任務已停止','『'+title+'』已被手動停止');
- else if(now==='failed'||now==='error')notify('任務失敗','『'+title+'』執行失敗,請查看 log')})}
-async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
- cfg??=await api('config');projects=await api('projects');tasks=await api('tasks');render();checkTaskTransitions(prevStatus);
- api('usage').then(u=>{$('#usage').innerHTML=u.map(usageCardHtml).join('')})
+ else if(now==='failed'||now==='error')notify('任務失敗','『'+title+'』執行失敗,請查看日誌')})}
+
+function getFilteredTasks(){
+ if(!selectedProject)return tasks;
+ return tasks.filter(t=>t.project===selectedProject);
 }
-function render(){$('#cols').innerHTML=columnsHtml(cfg,tasks,projects,runStatus)}
+
+function renderProjectOptions(){
+ $('#projectFilter').innerHTML=projectFilterOptionsHtml(projects,selectedProject);
+ $('#fProject').innerHTML=projectOptionsHtml(projects);
+}
+
+function renderDashboard(){
+ const filteredTasks=getFilteredTasks();
+ const needsTasks=tasks.filter(t=>t.status==='review'||t.state==='needs-you'||runStatus[t.id]?.status==='needs-you');
+ const runningTasks=tasks.filter(t=>(t.status==='doing'||t.state==='running'||runStatus[t.id]?.status==='running')&&t.status!=='review'&&t.state!=='needs-you');
+ const queuedTasks=tasks.filter(t=>(t.status==='todo'||t.status==='backlog'||t.state==='queued'||t.state==='draft')&&runStatus[t.id]?.status!=='running'&&runStatus[t.id]?.status!=='needs-you');
+ const completedTasks=tasks.filter(t=>t.status==='done'||t.state==='completed');
+
+ $('#countNeedsYou').textContent=needsTasks.length;
+ $('#countRunning').textContent=runningTasks.length;
+ $('#countQueued').textContent=queuedTasks.length;
+ $('#countCompleted').textContent=completedTasks.length;
+
+ const needsCount=needsTasks.length;
+ document.title=(needsCount>0?`(${needsCount}) `:'')+'Multi-Agent Workboard';
+
+ $('#needsYouPinned').innerHTML=needsYouPinnedHtml(needsTasks,runStatus,isPinnedExpanded);
+ $('#usageSummaryBar').innerHTML=usageSummaryHtml(usageData);
+ $('#agentsList').innerHTML=agentsListHtml(cfg?.agents||[],activeAgents,usageData,cooldowns);
+ $('#tasksPaneContent').innerHTML=tasksPaneHtml(filteredTasks,activeTaskTab,cfg,projects,runStatus);
+ $('#activityContent').innerHTML=activityListHtml(activityEvents);
+ $('#bigCounterContent').innerHTML=bigCounterOverlayHtml(needsCount,tasks);
+}
+
+function renderBoard(){
+ $('#cols').innerHTML=columnsHtml(cfg,tasks,projects,runStatus);
+}
+
+function renderAnalytics(){
+ $('#usage').innerHTML=usageData.map(usageCardHtml).join('');
+}
+
+function render(){
+ renderProjectOptions();
+ renderDashboard();
+ renderBoard();
+}
+
+function switchView(view){
+ currentView=view;
+ $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
+ $('#dashboardView').hidden=view!=='dashboard';
+ $('#boardPage').hidden=view!=='board';
+ $('#analyticsPage').hidden=view!=='analytics';
+ if(view==='dashboard')renderDashboard();
+ else if(view==='board')renderBoard();
+ else if(view==='analytics')renderAnalytics();
+}
+
+async function load(){
+ const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
+ const prevRun={};Object.keys(runStatus).forEach(id=>{prevRun[id]=runStatus[id]?.status});
+ cfg??=await api('config');
+ const [p,t,u,act]=await Promise.all([api('projects'),api('tasks'),api('usage'),api('activity').catch(()=>null)]);
+ projects=p;tasks=t;usageData=u;
+ if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}
+ if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
+ render();
+ checkTaskTransitions(prevStatus);
+ checkRunTransitions(prevRun);
+}
+
 function stopDetailStream(){detailSource?.close();detailSource=null;if(detailPoll)clearInterval(detailPoll);detailPoll=null}
 function paintDetail(){if(!openDetailId)return;const task=tasks.find(t=>t.id===openDetailId)||{id:openDetailId};$('#detailPage').innerHTML=detailHtml(detailData,task,detailEvents,detailArtifacts,detailRaw)}
 async function loadDetail(){if(!openDetailId)return;const id=encodeURIComponent(openDetailId);const [detail,legacy]=await Promise.all([api('runs/'+id),api('tasks/'+id+'/log')]);detailData=detail;detailRaw=legacy.content||'';paintDetail()}
 async function pollDetail(){if(!openDetailId)return;try{const id=encodeURIComponent(openDetailId);const [events,detail]=await Promise.all([api('runs/'+id+'/events?since='+detailCursor),api('runs/'+id)]);if(Array.isArray(events)){detailEvents.push(...events);detailCursor+=events.length}detailData=detail;paintDetail()}catch(e){console.warn('detail polling failed',e)}}
 function startDetailStream(){stopDetailStream();if(!openDetailId)return;const id=encodeURIComponent(openDetailId);try{const source=new EventSource('/api/runs/'+id+'/stream?since='+detailCursor);detailSource=source;source.addEventListener('snapshot',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('run',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('activity',e=>{detailEvents.push(JSON.parse(e.data));detailCursor++;paintDetail()});source.addEventListener('end',()=>stopDetailStream());source.onerror=()=>{if(detailSource!==source)return;source.close();detailSource=null;detailPoll=setInterval(pollDetail,3000);pollDetail()}}catch(e){detailPoll=setInterval(pollDetail,3000)}}
-async function openDetail(id){openDetailId=id;detailData=null;detailEvents=[];detailArtifacts={};detailRaw='';detailCursor=0;$('#boardPage').hidden=true;$('#detailPage').hidden=false;await loadDetail();await pollDetail();startDetailStream()}
-function closeDetail(){stopDetailStream();openDetailId=null;$('#detailPage').hidden=true;$('#boardPage').hidden=false}
+async function openDetail(id){openDetailId=id;detailData=null;detailEvents=[];detailArtifacts={};detailRaw='';detailCursor=0;$('#dashboardView').hidden=true;$('#boardPage').hidden=true;$('#analyticsPage').hidden=true;$('#detailPage').hidden=false;await loadDetail();await pollDetail();startDetailStream()}
+function closeDetail(){stopDetailStream();openDetailId=null;$('#detailPage').hidden=true;switchView(currentView)}
+
 const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
 document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
 document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
 document.addEventListener('drop',e=>{const c=e.target.closest('.col');if(c){e.preventDefault();post({id:e.dataTransfer.getData('id'),status:c.dataset.c})}});
+
 async function fetchLog(id){try{runStatus[id]=await api('tasks/'+id+'/log')}catch(e){runStatus[id]={status:'unknown',content:'讀取失敗: '+e.message,runs:[]}}}
 function paintLog(){if(!openLogId)return;const r=runStatus[openLogId];if(!r)return;
- $('#logTitle').textContent='Log: '+openLogId;
+ $('#logTitle').textContent='日誌: '+openLogId;
  const usageTxt=r.usage?(' · 本次用量: 約 '+(r.usage.total>=1000?(r.usage.total/1000).toFixed(1)+'k':r.usage.total)+' tokens'+(r.usage.costEstimate>0?' · 約 $'+r.usage.costEstimate.toFixed(2)+'(估算)':'')):'';
  $('#logMeta').textContent=`${r.agent?('agent: '+r.agent+' · '):''}狀態: ${STATUS_LABEL[r.status]||r.status}${r.runs&&r.runs.length>1?(' · 共 '+r.runs.length+' 次派工紀錄'):''}${usageTxt}`;
  const pre=$('#logContent');
- pre.textContent=(r.truncated?'...(log 太長,只顯示最後一段)...\n':'')+(r.content||'(尚無輸出)');
+ pre.textContent=(r.truncated?'...(日誌太長,只顯示最後一段)...\n':'')+(r.content||'(尚無輸出)');
  pre.scrollTop=pre.scrollHeight}
 async function openLog(id){openLogId=id;$('#logModal').hidden=false;await fetchLog(id);paintLog()}
 function closeLog(){openLogId=null;$('#logModal').hidden=true}
-async function refreshActive(){const ids=new Set(tasks.filter(t=>t.status==='doing').map(t=>t.id));if(openLogId)ids.add(openLogId);
- if(ids.size===0)return;const prevRun={};ids.forEach(id=>{prevRun[id]=runStatus[id]?.status});
- await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);render();paintLog()}
+
+async function refreshActive(){
+ const ids=new Set(tasks.filter(t=>t.status==='doing'||t.state==='running').map(t=>t.id));
+ if(openLogId)ids.add(openLogId);
+ if(ids.size>0){const prevRun={};ids.forEach(id=>{prevRun[id]=runStatus[id]?.status});await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);paintLog()}
+ try{const act=await api('activity');if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}}catch(e){}
+ renderDashboard();
+}
+
 document.addEventListener('click',async e=>{
  const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del,detailId=e.target.dataset?.detail;
+ const viewTarget=e.target.dataset?.view;
+ if(viewTarget){switchView(viewTarget);return}
+ const tabTarget=e.target.dataset?.tab||e.target.closest('[data-tab]')?.dataset?.tab;
+ if(tabTarget){activeTaskTab=tabTarget;$$('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tabTarget));renderDashboard();return}
+ if(e.target.dataset?.action==='toggle-old-done'||e.target.closest('[data-action="toggle-old-done"]')){
+  showOldDone=!showOldDone;try{localStorage.setItem('workboard_show_old_done',String(showOldDone))}catch(err){}
+  if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
+  renderDashboard();renderBoard();return
+ }
+ if(e.target.dataset?.action==='open-big-counter'){renderDashboard();$('#bigCounterModal').hidden=false;return}
+ if(e.target.dataset?.action==='close-big-counter'||e.target.closest('[data-action="close-big-counter"]')){$('#bigCounterModal').hidden=true;return}
+ if(e.target.dataset?.action==='toggle-pinned'){isPinnedExpanded=!isPinnedExpanded;renderDashboard();return}
  if(e.target.matches('[data-detail-back]')){closeDetail();return}
- if(detailId){openDetail(detailId);return}
- if(e.target.dataset?.artifact&&openDetailId){const name=e.target.dataset.artifact;try{detailArtifacts[name]=await api('runs/'+encodeURIComponent(openDetailId)+'/artifacts/'+encodeURIComponent(name),{},true);paintDetail()}catch(err){alert(err.message)}return}
- if(e.target.dataset?.detailAction&&openDetailId){const action=e.target.dataset.detailAction;let endpoint=action,body={};if(action==='reject'){const feedback=$('[data-approval-note]')?.value.trim();if(!feedback){alert('Feedback is required');return}body={feedback}}else if(action==='approve')body={note:$('[data-approval-note]')?.value.trim()||''};else if(['retry','complete','abort'].includes(action)){endpoint='resolve';body={action}}try{const r=await api('runs/'+encodeURIComponent(openDetailId)+'/'+endpoint,{method:'POST',body:JSON.stringify(body)});if(r.error)alert(r.error);await loadDetail();startDetailStream()}catch(err){alert(err.message)}return}
+ if(detailId){openDetail(detailId);$('#bigCounterModal').hidden=true;return}
+ if(e.target.dataset?.artifact&&openDetailId){const name=e.target.dataset.artifact;try{detailArtifacts[name]=await api('runs/'+encodeURIComponent(openDetailId)+'/artifacts/'+encodeURIComponent(name),{},true);paintDetail()}catch(err){showToast(err.message,'error')}return}
+ if(e.target.dataset?.detailAction&&openDetailId){const action=e.target.dataset.detailAction;let endpoint=action,body={};if(action==='reject'){const feedback=$('[data-approval-note]')?.value.trim();if(!feedback){showToast('退回必須填寫具體意見','error');$('[data-approval-note]')?.focus();return}body={feedback}}else if(action==='approve')body={note:$('[data-approval-note]')?.value.trim()||''};else if(['retry','complete','abort'].includes(action)){endpoint='resolve';body={action}}try{const r=await api('runs/'+encodeURIComponent(openDetailId)+'/'+endpoint,{method:'POST',body:JSON.stringify(body)});if(r.error)showToast(r.error,'error');else showToast('操作已執行','info');await loadDetail();startDetailStream();load()}catch(err){showToast(err.message,'error')}return}
  if(run){const dispatchNow=async force=>{const body=force?{id:run,force:true}:{id:run};const r=await api('dispatch',{method:'POST',body:JSON.stringify(body)});
   if(r.conflict){if(confirm(r.error+'\n\n仍要繼續派工嗎?'))await dispatchNow(true);return}
-  if(r.error){alert(r.error)}else{await load();openLog(run)}};
+  if(r.error){showToast(r.error,'error')}else{showToast('已派工任務: '+run,'info');await load();openLog(run)}};
   await dispatchNow(false);return}
- if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)alert(r.error);await load();await refreshActive();return}
+ if(stop){if(!confirm('停止這個任務目前的派工行程?'))return;userStopping[stop]=true;const r=await api('tasks/'+stop+'/stop',{method:'POST'});if(r.error)showToast(r.error,'error');else showToast('行程已終止','info');await load();await refreshActive();return}
  const pdel=e.target.dataset?.pdel;
- if(pdel){if(!confirm('刪除專案「'+pdel+'」?(不會刪除該資料夾;綁定它的任務會變成無法派工)'))return;const r=await api('projects/'+encodeURIComponent(pdel),{method:'DELETE'});if(r.error)alert(r.error);await load();paintProjects();return}
+ if(pdel){if(!confirm('刪除專案「'+pdel+'」?(不會刪除該資料夾;綁定它的任務會變成無法派工)'))return;const r=await api('projects/'+encodeURIComponent(pdel),{method:'DELETE'});if(r.error)showToast(r.error,'error');else showToast('專案已刪除','info');await load();paintProjects();return}
  if(logId){openLog(logId);return}
- if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)alert(r.error);if(openLogId===del)closeLog();await load();return}
+ if(del){if(!confirm('刪除這張任務?若正在派工中會先停止行程。'))return;const r=await api('tasks/'+del,{method:'DELETE'});if(r.error)showToast(r.error,'error');else showToast('任務已刪除','info');if(openLogId===del)closeLog();await load();return}
 });
-document.addEventListener('change',e=>{if(e.target.matches('select')&&e.target.dataset.id)post({id:e.target.dataset.id,agent:e.target.value})});
+
+document.addEventListener('change',e=>{
+ if(e.target.matches('select')&&e.target.dataset.id)post({id:e.target.dataset.id,agent:e.target.value});
+ if(e.target.id==='projectFilter'){selectedProject=e.target.value;renderDashboard();renderBoard()}
+});
+document.addEventListener('keydown',e=>{
+ if(e.key==='Escape'){
+  if(!$('#bigCounterModal').hidden)$('#bigCounterModal').hidden=true;
+  else if(!$('#logModal').hidden)closeLog();
+  else if(!$('#taskModal').hidden)$('#taskModal').hidden=true;
+  else if(!$('#projModal').hidden)$('#projModal').hidden=true;
+  else if(!$('#sessionModal').hidden)$('#sessionModal').hidden=true;
+ }
+});
+
 async function refreshTaskModels(){const agent=$('#fAgent').value;if(!agent){$('#fModel').innerHTML=modelOptionsHtml([]);return}try{const r=await api('agents/'+encodeURIComponent(agent)+'/models');$('#fModel').innerHTML=modelOptionsHtml(r.models||[])}catch(e){$('#fModel').innerHTML=modelOptionsHtml([])}}
 $('#fAgent').onchange=refreshTaskModels;
 $('#add').onclick=()=>{['#fTitle','#fGoal','#fAcc','#fFiles'].forEach(s=>$(s).value='');
- $('#fProject').innerHTML=projectOptionsHtml(projects);$('#fAgent').innerHTML=agentOptionsHtml(cfg.agents);refreshTaskModels();
+ renderProjectOptions();if(selectedProject)$('#fProject').value=selectedProject;
+ $('#fAgent').innerHTML=agentOptionsHtml(cfg.agents);refreshTaskModels();
  $('#taskModal').hidden=false;$('#fTitle').focus()};
 $('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
-$('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){alert('請填標題');return}
- await post({title,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true};
+$('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){showToast('請填寫任務標題','error');$('#fTitle').focus();return}
+ await post({title,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true;showToast('任務已建立','info')};
+
 function paintProjects(){$('#projList').innerHTML=projects.length?projects.map(projectRowHtml).join(''):'<div class=mut>尚無專案</div>'}
 $('#projBtn').onclick=()=>{paintProjects();$('#projModal').hidden=false};
 $('#projClose').onclick=()=>{$('#projModal').hidden=true};
-$('#projSave').onclick=async()=>{const r=await api('projects',{method:'POST',body:JSON.stringify({id:$('#pId').value.trim(),name:$('#pName').value.trim(),path:$('#pPath').value.trim()})});
- if(r.error){alert(r.error);return}['#pId','#pName','#pPath'].forEach(s=>$(s).value='');await load();paintProjects()};
+$('#projSave').onclick=async()=>{const id=$('#pId').value.trim(),name=$('#pName').value.trim(),path=$('#pPath').value.trim();
+ if(!id||!path){showToast('請填寫專案 ID 與路徑','error');return}
+ const r=await api('projects',{method:'POST',body:JSON.stringify({id,name,path})});
+ if(r.error){showToast(r.error,'error');return}showToast('專案建立成功','info');['#pId','#pName','#pPath'].forEach(s=>$(s).value='');await load();paintProjects()};
+
 $('#logClose').onclick=closeLog;
 $('#notifyBtn').onclick=()=>{if(typeof Notification==='undefined')return;Notification.requestPermission().then(updateNotifyBtn)};
 updateNotifyBtn();

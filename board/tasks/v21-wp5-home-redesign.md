@@ -1,6 +1,6 @@
 ---
 title: WP5 首頁重做+通知置頂+中文統一+完成卡收起
-status: backlog
+status: review
 agent: codex-b
 priority: p1
 files: web/index.html,web/render.js,web/detail.js,web/session.js,tests/web.test.mjs
@@ -22,3 +22,15 @@ updated: 2026-09-30
 - 零依賴;不放寬核准關卡不變式(`tools/engine.mjs` 的 gate 驗證);所有動態字串 escape;測試用假 CLI + 暫存沙箱,不碰真實 board/;你的沙箱若跑不了 spawn 測試請註明,由 Claude 補跑;不要 git commit;完成改 `review` 並在 Log 寫摘要與未驗證項;`npm test` 不得少於目前數量(95)。
 
 ## Log
+
+- 計畫被退回並附意見,重新產出 (2026-09-30T13:40:40.971Z)
+
+- run run-1790775276604 需要你處理(approval): step「plan」已完成,需要你核准(或退回並附意見)後才會繼續
+
+- 計畫已核准 (2026-09-30T13:45:44.635Z)
+
+- run run-1790775276604 completed
+
+### 2026-09-30 Claude 複核
+- 第一次計畫因依據舊版任務卡被退回(補上通知/中文/收起、禁動 engine.mjs),第二次計畫核准後施工。`npm test` 98/98;`tools/engine.mjs` 零改動;真實 server:`GET /api/activity` 回傳 events.jsonl 聚合、首頁 200;`web/*.js|html` 已無 `alert(`;detail.js 已無英文按鈕文字。
+- **未驗證**:整個首頁畫面(三區、分頁、通知、收起)沒有經瀏覽器實際渲染,只有 render 函式與 API 的自動化測試——待 WP15(CDP 瀏覽器測試)與使用者實測。

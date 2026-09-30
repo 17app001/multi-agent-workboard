@@ -188,6 +188,75 @@ function findFileConflict(id, files) {
   return null;
 }
 
+export function collectRecentActivities(limit = 40) {
+  const runsDir = path.join(root, 'board/runs');
+  if (!fs.existsSync(runsDir)) return [];
+  const events = [];
+  let taskDirs = [];
+  try {
+    taskDirs = fs.readdirSync(runsDir, { withFileTypes: true })
+      .filter(d => d.isDirectory() && /^[\w-]+$/.test(d.name))
+      .map(d => d.name);
+  } catch {
+    return [];
+  }
+
+  const taskTitles = new Map();
+  if (fs.existsSync(tasksDir)) {
+    try {
+      for (const f of fs.readdirSync(tasksDir).filter(f => f.endsWith('.md'))) {
+        const id = f.replace(/\.md$/, '');
+        try {
+          const t = parse(f);
+          taskTitles.set(id, t.title || id);
+        } catch {}
+      }
+    } catch {}
+  }
+
+  for (const taskId of taskDirs) {
+    const tDir = path.join(runsDir, taskId);
+    let runDirs = [];
+    try {
+      runDirs = fs.readdirSync(tDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && /^run-\d+$/.test(d.name))
+        .map(d => d.name)
+        .sort();
+    } catch {
+      continue;
+    }
+    if (!runDirs.length) continue;
+    const recentRunDirs = runDirs.slice(-2);
+    for (const runId of recentRunDirs) {
+      const evFile = path.join(tDir, runId, 'events.jsonl');
+      if (!fs.existsSync(evFile)) continue;
+      try {
+        const raw = fs.readFileSync(evFile, 'utf8');
+        const lines = raw.split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const ev = JSON.parse(line);
+            events.push({
+              ts: ev.ts || Date.now(),
+              taskId,
+              taskTitle: taskTitles.get(taskId) || taskId,
+              step: ev.step || null,
+              kind: ev.kind || 'message',
+              text: typeof ev.text === 'string' ? ev.text : (typeof ev.message === 'string' ? ev.message : JSON.stringify(ev.text ?? ev.message ?? '')),
+              runId: ev.runId || runId,
+              phase: ev.phase || null,
+            });
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+
+  events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return events.slice(0, limit);
+}
+
 engine.init(); // 接手上次 server 留下的 running run(needs-you 的 run 不需要行程,呼叫 API 時才載入)
 http.createServer(async (req, res) => {
   try {
@@ -250,7 +319,49 @@ http.createServer(async (req, res) => {
         return send(res, 200, { ...r, engine: true, agent: null, log: null, pid: null });
       } catch (e) { return send(res, e.status || 400, { error: e.message }); }
     }
+
+
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
+    if (url.pathname === '/api/activity' && req.method === 'GET') {
+      const events = collectRecentActivities(40);
+      const activeRuns = [...listActiveRuns(), ...engine.listActiveRuns()];
+      const seen = new Set();
+      const activeAgents = [];
+      for (const r of activeRuns) {
+        if (!r || !r.id || seen.has(r.id)) continue;
+        seen.add(r.id);
+        const detail = engine.runDetail(r.id);
+        const run = detail?.run;
+        const runningStep = run?.steps?.find(s => s.status === 'running') || null;
+        let taskTitle = r.id;
+        const tf = path.join(tasksDir, r.id + '.md');
+        if (fs.existsSync(tf)) {
+          try { taskTitle = parse(r.id + '.md').title || r.id; } catch {}
+        }
+        activeAgents.push({
+          taskId: r.id,
+          taskTitle,
+          agent: r.agent || runningStep?.agent || (run?.steps?.[run.cursor]?.agent) || null,
+          startedAt: r.startedAt || run?.startedAt || null,
+          step: runningStep?.id || (run?.steps?.[run.cursor]?.id) || null,
+          status: run?.status || r.status || 'running',
+        });
+      }
+      let cooldowns = {};
+      const cdf = path.join(root, 'board/runs/agent-cooldown.json');
+      if (fs.existsSync(cdf)) {
+        try {
+          const cd = JSON.parse(fs.readFileSync(cdf, 'utf8'));
+          const now = Date.now();
+          if (cd && typeof cd === 'object' && !Array.isArray(cd)) {
+            for (const [k, v] of Object.entries(cd)) {
+              if (v && Number.isFinite(v.until) && v.until > now) cooldowns[k] = v;
+            }
+          }
+        } catch {}
+      }
+      return send(res, 200, { events, activeAgents, cooldowns });
+    }
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
       const b = await readBody(req);
       const id = b.id || 'task-' + Date.now().toString(36);

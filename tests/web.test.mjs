@@ -14,7 +14,7 @@ const indexSrc = fs.readFileSync(path.join(repo, 'web/index.html'), 'utf8');
 const detailSrc = fs.readFileSync(path.join(repo, 'web/detail.js'), 'utf8');
 
 const ctx = vm.createContext({});
-vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, usageCardHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, projectOptionsHtml, projectRowHtml };', ctx);
+vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, isOldDone, usageCardHtml, usageSummaryHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, agentsListHtml, tasksPaneHtml, needsYouPinnedHtml, activityListHtml, bigCounterOverlayHtml, agentOptionsHtml, modelOptionsHtml, projectFilterOptionsHtml, projectOptionsHtml, projectRowHtml };', ctx);
 const R = ctx.api;
 const detailCtx = vm.createContext({ Date, Object });
 vm.runInContext(detailSrc + '\n;this.api = { detailHtml, detailEsc };', detailCtx);
@@ -102,6 +102,35 @@ test('Task Detail escapes malicious run, event, artifact, and raw-log data', () 
   assert.match(html, /data-detail-action="approve"/);
 });
 
+test('WP5 新增樣板函式 XSS 防護與 escape 安全性', () => {
+  const sumHtml = R.usageSummaryHtml([{ found: true, today: EVIL, costToday: 1.5 }]);
+  assert.ok(!sumHtml.includes('<img') && !sumHtml.includes('<script'));
+  assertSafe(R.agentsListHtml(cfg.agents, [{ taskId: EVIL, taskTitle: EVIL, agent: 'a1', step: EVIL }], [], { a1: { until: Date.now() + 10000, reason: EVIL } }), 'agentsList');
+  assertSafe(R.tasksPaneHtml([{ ...evilTask, status: 'review' }], 'needs-you', cfg, [evilProject], {}), 'tasksPane needs-you');
+  assertSafe(R.tasksPaneHtml([{ ...evilTask, status: 'doing' }], 'running', cfg, [evilProject], {}), 'tasksPane running');
+  assertSafe(R.tasksPaneHtml([{ ...evilTask, status: 'todo' }], 'queued', cfg, [evilProject], {}), 'tasksPane queued');
+  assertSafe(R.tasksPaneHtml([{ ...evilTask, status: 'done' }], 'completed', cfg, [evilProject], {}, true), 'tasksPane completed');
+  assertSafe(R.needsYouPinnedHtml([{ ...evilTask, status: 'review' }], {}, true), 'needsYouPinned expanded');
+  const collapsed = R.needsYouPinnedHtml([{ ...evilTask, status: 'review' }], {}, false);
+  assert.ok(!collapsed.includes('<img') && !collapsed.includes('<script'));
+  assertSafe(R.activityListHtml([{ ts: Date.now(), taskId: EVIL, taskTitle: EVIL, step: EVIL, kind: EVIL, text: EVIL }]), 'activityList');
+  assertSafe(R.bigCounterOverlayHtml(2, [{ ...evilTask, status: 'review' }]), 'bigCounterOverlay');
+  assertSafe(R.projectFilterOptionsHtml([evilProject], EVIL), 'projectFilterOptions');
+  assertSafe(R.modelOptionsHtml([{ id: EVIL, label: EVIL }]), 'modelOptions');
+  assertSafe(R.agentOptionsHtml([{ id: EVIL, label: EVIL }]), 'agentOptions');
+});
+
+test('isOldDone: 3天前完成的任務判斷與容錯', () => {
+  const fourDaysAgo = new Date(Date.now() - 4 * 86400000).toISOString().slice(0, 10);
+  const oneDayAgo = new Date(Date.now() - 1 * 86400000).toISOString().slice(0, 10);
+  assert.equal(R.isOldDone({ status: 'done', updated: fourDaysAgo }), true);
+  assert.equal(R.isOldDone({ status: 'completed', updated: fourDaysAgo }), true);
+  assert.equal(R.isOldDone({ status: 'done', updated: oneDayAgo }), false);
+  assert.equal(R.isOldDone({ status: 'todo', updated: fourDaysAgo }), false);
+  assert.equal(R.isOldDone({ status: 'done', updated: 'invalid-date' }), false);
+  assert.equal(R.isOldDone({ status: 'done' }), false);
+});
+
 test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄位未經 esc 直接插進模板,index.html 用 render.js 的樣板', () => {
   for (const [name, src] of [['render.js', renderSrc], ['index.html', indexSrc]]) {
     const raw = [...src.matchAll(/\$\{\s*(?:t|a|p|c|d|r|x|cfg|task|proj)\.[\w.]+\s*\}/g)].map(m => m[0]);
@@ -113,7 +142,7 @@ test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄
   // 所有 innerHTML 賦值都必須來自 render.js 的樣板函式或固定字串
   const inner = [...indexSrc.matchAll(/innerHTML\s*=\s*([^;\n]+)/g)].map(m => m[1].trim());
   assert.ok(inner.length >= 4);
-  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|agentOptionsHtml|modelOptionsHtml|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
+  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|projectFilterOptionsHtml|agentOptionsHtml|modelOptionsHtml|usageSummaryHtml|agentsListHtml|tasksPaneHtml|needsYouPinnedHtml|activityListHtml|bigCounterOverlayHtml|usageData\.map\(usageCardHtml\)|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
   // index.html 的內嵌腳本語法正確,且所有 fetch 都經過帶 JSON content-type 的 api()
   const scripts = [...indexSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   assert.equal(scripts.length, 1);
