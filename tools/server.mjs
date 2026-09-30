@@ -394,6 +394,7 @@ http.createServer(async (req, res) => {
       if (req.method === 'POST' && !name) {
         if (sub === 'approve') { const b = await readBody(req); return send(res, 200, engine.approve(taskId, b.note)); }
         if (sub === 'reject') { const b = await readBody(req); return send(res, 200, engine.reject(taskId, b.feedback ?? b.note ?? b.comment)); }
+        if (sub === 'note') { const b = await readBody(req); return send(res, 200, engine.addStepNote(taskId, b.note)); }
         if (sub === 'retry') return send(res, 200, engine.retry(taskId));
         if (sub === 'resolve') { const b = await readBody(req); return send(res, 200, engine.resolveRun(taskId, b.action)); }
         if (sub === 'stop') { const r = await engine.stopRun(taskId); return send(res, r.ok ? 200 : 400, r); }

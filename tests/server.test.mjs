@@ -184,6 +184,7 @@ test('Origin 若存在必須是 http://localhost:<port> 或 http://127.0.0.1:<po
   // 派工 API 與 run 動作 API 也受保護
   assert.equal((await rawReq('POST', '/api/dispatch', { headers: { ...JSON_H, origin: 'http://evil.com', 'content-length': 2 }, body: '{}' })).status, 403);
   assert.equal((await rawReq('POST', '/api/runs/org-ok-2/approve', { headers: { origin: 'http://evil.com' } })).status, 403);
+  assert.equal((await rawReq('POST', '/api/runs/org-ok-2/note', { headers: { ...JSON_H, origin: 'http://evil.com', 'content-length': 2 }, body: '{}' })).status, 403);
 });
 
 test('POST 有 body 時 Content-Type 必須是 application/json(text/plain 的簡單跨站請求被擋);壞 JSON 回 400 不會讓 server 掛掉', async () => {

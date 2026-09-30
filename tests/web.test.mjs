@@ -102,6 +102,19 @@ test('Task Detail escapes malicious run, event, artifact, and raw-log data', () 
   assert.match(html, /data-detail-action="approve"/);
 });
 
+test('revision-limit Detail has explicit recovery controls, timeline, folded review, and escapes notes', () => {
+  const html = D.detailHtml({ run: { taskId: 't', status: 'needs-you', revisions: 3, needsYou: { reason: 'revision-limit', message: EVIL }, reviewHistory: [{ ts: Date.now(), verdict: EVIL, attempt: EVIL, revision: EVIL }] }, artifacts: [] }, { title: EVIL }, [{ text: EVIL }], { 'review.md': EVIL }, EVIL);
+  assertSafe(html, 'revision detail');
+  assert.match(html, /<details>/);
+  assert.match(html, /data-detail-action="note"/);
+  assert.match(html, /data-detail-action="retry"/);
+  assert.match(html, /data-detail-action="complete"/);
+  assert.match(html, /data-detail-action="abort"/);
+  assert.match(html, /讓 agent 再試一次/);
+  assert.match(html, /我自己處理/);
+  assert.match(html, /忽略並完成/);
+});
+
 test('WP5 新增樣板函式 XSS 防護與 escape 安全性', () => {
   const sumHtml = R.usageSummaryHtml([{ found: true, today: EVIL, costToday: 1.5 }]);
   assert.ok(!sumHtml.includes('<img') && !sumHtml.includes('<script'));

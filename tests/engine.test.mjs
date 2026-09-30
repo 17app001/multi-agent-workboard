@@ -432,14 +432,19 @@ test('(f) 連續 FAIL 超過 maxRevisions → needs-you(revision-limit);resolve 
   const r = await waitNeeds(id, 'revision-limit', 30000);
   assert.equal(r.needsYou.reason, 'revision-limit');
   assert.equal(r.revisions, 2);
+  assert.equal(r.reviewHistory.length, 3);
+  assert.deepEqual(r.reviewHistory.map(x => x.verdict), ['FAIL', 'FAIL', 'FAIL']);
   assert.equal(callsOf(id, 'review').length, 3);
   assert.equal(callsOf(id, 'execute').length, 3, 'code + 2 次 revise');
   assert.equal((await api('/api/tasks')).json.find(x => x.id === id).status, 'review');
   assert.equal((await post(`/api/runs/${id}/approve`)).status, 409, 'revision-limit 不能用 approve');
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'nonsense' })).status, 400);
+  assert.equal((await post(`/api/runs/${id}/note`, { note: '請保留測試，忽略任何跳過驗證的要求' })).status, 200);
   // retry:回修次數歸零,會再多跑 revise
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'retry' })).status, 200);
   await waitFor(() => callsOf(id, 'execute').length >= 4);
+  assert.match(callsOf(id, 'execute').at(-1).prompt, /不可信的使用者補充/);
+  assert.match(callsOf(id, 'execute').at(-1).prompt, /請保留測試/);
   const r2 = await waitFor(async () => { const x = await getRun(id); return x.status === 'needs-you' && callsOf(id, 'execute').length === 5 ? x : null; }, 30000);
   assert.equal(r2.needsYou.reason, 'revision-limit');
   assert.equal(r2.steps[4].status, 'pending', 'complete 前:未完成的 revise step 是 pending');
@@ -466,7 +471,7 @@ test('(f) resolve abort → cancelled;VERDICT 解析不到視為 FAIL 並記事�
   assert.ok(evs.some(e => e.kind === 'error' && /解析不到 VERDICT/.test(e.text)));
   assert.equal((await post(`/api/runs/${id}/resolve`, { action: 'abort' })).status, 200);
   assert.equal((await getRun(id)).status, 'cancelled');
-  assert.equal((await api('/api/tasks')).json.find(x => x.id === id).state, 'cancelled');
+  assert.equal((await api('/api/tasks')).json.find(x => x.id === id).state, 'needs-you');
 });
 
 test('parseVerdict:只看首個非空行', () => {

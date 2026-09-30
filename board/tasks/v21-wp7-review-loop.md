@@ -1,6 +1,6 @@
 ---
 title: WP7 回修迴圈介面(再試一次/我自己處理/忽略)
-status: backlog
+status: review
 agent: codex-b
 priority: p1
 files: web/detail.js,tools/engine.mjs,tools/server.mjs,tests
@@ -23,3 +23,13 @@ updated: 2026-09-30
 - 零依賴;不放寬核准關卡不變式(`tools/engine.mjs` 的 gate 驗證);所有動態字串 escape;測試用假 CLI + 暫存沙箱,不碰真實 board/;你的沙箱若跑不了 spawn 測試請註明,由 Claude 補跑;不要 git commit;完成改 `review` 並在 Log 寫摘要與未驗證項;`npm test` 不得少於目前數量(95)。
 
 ## Log
+
+- run run-1790777195782 需要你處理(approval): step「plan」已完成,需要你核准(或退回並附意見)後才會繼續
+
+- 計畫已核准 (2026-09-30T14:08:26.621Z)
+
+- run run-1790777195782 completed
+
+### 2026-09-30 Claude 複核
+- `npm test` 105/105;gate 不變式零改動;`POST /api/runs/:id/note` 限非 approval 的 needs-you、≤4000 字、以「不可信的使用者補充」段併入下次同 step prompt;review 歷史存 run.reviewHistory;abort 於 revision-limit 時任務標 needs-you(人工接手)。
+- 未驗證:回修介面畫面(未經瀏覽器渲染)。

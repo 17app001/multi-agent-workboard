@@ -337,7 +337,7 @@ async function load(){
 
 function stopDetailStream(){detailSource?.close();detailSource=null;if(detailPoll)clearInterval(detailPoll);detailPoll=null}
 function paintDetail(){if(!openDetailId)return;const task=tasks.find(t=>t.id===openDetailId)||{id:openDetailId};$('#detailPage').innerHTML=detailHtml(detailData,task,detailEvents,detailArtifacts,detailRaw)}
-async function loadDetail(){if(!openDetailId)return;const id=encodeURIComponent(openDetailId);const [detail,legacy]=await Promise.all([api('runs/'+id),api('tasks/'+id+'/log')]);detailData=detail;detailRaw=legacy.content||'';paintDetail()}
+async function loadDetail(){if(!openDetailId)return;const id=encodeURIComponent(openDetailId);const [detail,legacy]=await Promise.all([api('runs/'+id),api('tasks/'+id+'/log')]);detailData=detail;detailRaw=legacy.content||'';if(detail?.run?.status==='needs-you'&&detail.run.needsYou?.reason==='revision-limit'){try{detailArtifacts['review.md']=await api('runs/'+id+'/artifacts/review.md',{},true)}catch(e){detailArtifacts['review.md']='尚未取得 review.md'}}paintDetail()}
 async function pollDetail(){if(!openDetailId)return;try{const id=encodeURIComponent(openDetailId);const [events,detail]=await Promise.all([api('runs/'+id+'/events?since='+detailCursor),api('runs/'+id)]);if(Array.isArray(events)){detailEvents.push(...events);detailCursor+=events.length}detailData=detail;paintDetail()}catch(e){console.warn('detail polling failed',e)}}
 function startDetailStream(){stopDetailStream();if(!openDetailId)return;const id=encodeURIComponent(openDetailId);try{const source=new EventSource('/api/runs/'+id+'/stream?since='+detailCursor);detailSource=source;source.addEventListener('snapshot',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('run',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('activity',e=>{detailEvents.push(JSON.parse(e.data));detailCursor++;paintDetail()});source.addEventListener('end',()=>stopDetailStream());source.onerror=()=>{if(detailSource!==source)return;source.close();detailSource=null;detailPoll=setInterval(pollDetail,3000);pollDetail()}}catch(e){detailPoll=setInterval(pollDetail,3000)}}
 async function openDetail(id){openDetailId=id;detailData=null;detailEvents=[];detailArtifacts={};detailRaw='';detailCursor=0;$('#dashboardView').hidden=true;$('#boardPage').hidden=true;$('#analyticsPage').hidden=true;$('#detailPage').hidden=false;await loadDetail();await pollDetail();startDetailStream()}
@@ -367,6 +367,18 @@ async function refreshActive(){
  try{const q=await api('quota');quotaData=Array.isArray(q)?q:quotaData}catch(e){}
  renderDashboard();
 }
+
+// Revision-limit actions need data/confirmation beyond the legacy resolver.
+document.addEventListener('click',async e=>{
+ const action=e.target.dataset?.detailAction;
+ if(!openDetailId||!['note','complete'].includes(action))return;
+ e.stopImmediatePropagation();
+ if(action==='complete'&&!confirm('這會把尚未完成的步驟標記為 waived，並將 run 視為完成。確定要忽略並完成嗎？'))return;
+ const note=action==='note'?$('[data-step-note]')?.value.trim():'';
+ if(action==='note'&&!note){showToast('請先輸入補充意見','error');$('[data-step-note]')?.focus();return}
+ const endpoint=action==='note'?'note':'resolve',body=action==='note'?{note}:{action};
+ try{const r=await api('runs/'+encodeURIComponent(openDetailId)+'/'+endpoint,{method:'POST',body:JSON.stringify(body)});if(r.error)showToast(r.error,'error');else showToast(action==='note'?'已加入下次同一步':'已送出操作','info');await loadDetail();startDetailStream();load()}catch(err){showToast(err.message,'error')}
+},{capture:true});
 
 document.addEventListener('click',async e=>{
  const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del,detailId=e.target.dataset?.detail;
