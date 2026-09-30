@@ -1,20 +1,25 @@
 ---
-title: WP7 Review 迴圈與人工介入
+title: WP7 回修迴圈介面(再試一次/我自己處理/忽略)
 status: backlog
-agent: claude
+agent: codex-b
 priority: p1
-files: tools/engine.mjs,web
+files: web/detail.js,tools/engine.mjs,tools/server.mjs,tests
 updated: 2026-09-30
 ---
 
-# WP7 Review 迴圈與人工介入
+# WP7 回修迴圈介面(再試一次/我自己處理/忽略)
 
-**先讀**:AGENTS.md、docs/v2.1-spec.md(§3 架構決策不可擅改、§8 驗收總則)。
-**依賴**:v21-wp3-run-engine(依賴的任務卡未到 review/done 前不要開工)。
-**建議 owner**:claude(使用者可改派)。
+**先讀**:AGENTS.md、docs/v2.1-spec.md(§3、§6、§8、§10、§11)、docs/review-codex-1.md(XSS/Host 規則)。**依賴**:WP5 完成後開工。
 
-## 內容與驗收
-- review step 的 VERDICT 解析(spec §4.4)與回修迴圈整合;超限時三選項(再試一次/我自己處理/忽略並完成)的 API 與 UI。
-驗收:假 CLI 測 PASS、FAIL→revise→PASS、連 FAIL 超限三種路徑。
+## 背景
+引擎已支援 review 的 VERDICT 迴圈與 `/api/runs/:id/resolve`(retry/complete/abort;complete 只限 revision-limit)。目前 Task Detail 的按鈕很陽春。
+## 要做
+1. 回修上限(revision-limit)時,Detail 頁顯示:review.md 的主要問題摘要(取 review.md 全文顯示,可折疊)、已回修次數、三個明確按鈕:「讓 agent 再試一次」(resolve retry)、「我自己處理」(abort 並保留變更,任務標記需人工)、「忽略並完成」(complete,需二次確認,並註明會把未完成步驟標為 waived)。
+2. 每次回修顯示第幾輪、review 的 VERDICT 歷史(時間軸)。
+3. 補一個 `POST /api/runs/:id/note` 讓使用者在 needs-you 時附加指示,下次重跑該 step 時併入 prompt(注意 prompt 信任邊界:標為 untrusted 使用者備註,不可覆寫引擎紀律)。
+驗收:引擎 gate 不變式不動;假 CLI 測 三種 resolve 路徑與 note 併入 prompt;web.test.mjs 惡意字串。
+
+## 共同硬性規則
+- 零依賴;不放寬核准關卡不變式(`tools/engine.mjs` 的 gate 驗證);所有動態字串 escape;測試用假 CLI + 暫存沙箱,不碰真實 board/;你的沙箱若跑不了 spawn 測試請註明,由 Claude 補跑;不要 git commit;完成改 `review` 並在 Log 寫摘要與未驗證項;`npm test` 不得少於目前數量(95)。
 
 ## Log

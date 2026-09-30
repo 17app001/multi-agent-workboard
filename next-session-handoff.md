@@ -27,6 +27,9 @@
 - 額度:codex-b(Mika)5h 已用約 58%(13:27 重置)。
 - 剩餘:WP5、WP6、WP7、WP8、WP13(看板顯示 codex 額度%)。
 
+## 使用者已選定的下一批(2026-09-30 晚)
+選 1通知置頂、2首頁重做、3中文統一、4codex額度、6需求拆解、8回修介面、10瀏覽器自動化、11完成卡收起;由 Mika(codex-b)施工、Claude 審查。**施工順序(避免同時改 web/)**:WP5(含1/2/3/11)→ WP13(額度)→ WP7(回修介面)→ WP14(需求拆解)→ WP15(瀏覽器測試,CDP 零依賴)。任務卡皆已建立於 board/tasks/(backlog);一次只派一張,完成→Claude 複核→通過才派下一張。未選:commander 模板、worktree(WP6)、用量分析(WP8)、開機自啟。
+
 ## 待使用者決定 / 已知風險
 1. D3:execute 權限強度與 command step 是否改 `{command,args}`+`shell:false`(審查 #8)。
 2. 審查 #10:prompt 信任邊界、核准計畫 hash 與 diff 範圍檢查(WP6 後做)。
