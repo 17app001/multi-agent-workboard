@@ -219,6 +219,8 @@ test('(a) pool 驗證與 Codex quota failover 會保留 human gate', async () =>
 
 test('(a) pool 全員額度耗盡會 blocked 並進 needs-you；冷卻到期後 retry 可再次選人', async () => {
   const id = 't-pool-exhausted';
+  fs.mkdirSync(path.join(sandbox, 'board/runs'), { recursive: true });
+  fs.writeFileSync(path.join(sandbox, 'board/runs/agent-cooldown.json'), '{}');
   await mkTask(id, { pipeline: 'poolplan', control: { quota: 'plan' } });
   assert.equal((await dispatch(id)).status, 200);
   const run = await waitNeeds(id, 'no-agent-available');

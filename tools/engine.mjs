@@ -250,7 +250,7 @@ function selectPoolAgent(def, st) {
   // A failed member is excluded only while that quota cooldown is active.
   // Otherwise a user retry after expiry could never select it again.
   const tried = new Set((st.agentAttempts || [])
-    .filter(a => a && a.quota && Number.isFinite(a.until) && a.until > now())
+    .filter(a => a && a.quota && cooldowns[a.agent])
     .map(a => a.agent));
   const unavailable = [];
   for (const id of members) {
@@ -872,6 +872,7 @@ export function retry(taskId) {
   if (run.status === 'completed') throw bad('run 已完成,沒有需要重試的 step');
   const st = run.steps[Math.min(run.cursor, run.steps.length - 1)];
   st.status = 'pending'; st.pid = null; st.endedAt = null;
+  st.agentAttempts = [];
   run.status = 'running'; run.error = null; run.endedAt = null; run.needsYou = null;
   ctx.stopping = false;
   saveRun(run);
@@ -889,6 +890,7 @@ export function resolveRun(taskId, action) {
     const st = run.steps[run.cursor];
     if (run.needsYou.reason === 'revision-limit') run.revisions = 0;
     st.status = 'pending'; st.pid = null; st.endedAt = null;
+    st.agentAttempts = [];
     run.status = 'running'; run.needsYou = null; saveRun(run);
     engineEv(ctx, st.id, 'message', `resolve: retry(${st.id})`, { phase: 'resolve' });
     setTaskStatus(taskId, 'running', `使用者選擇再試一次 (${new Date().toISOString()})`);
