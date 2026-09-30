@@ -89,6 +89,7 @@
       "defaultModel": "gemini-3.8-flash-high"
     }
   ],
+  "quotaThreshold": 90,
   "pools": {
     "codex": ["codex-b", "codex-a"]
   },

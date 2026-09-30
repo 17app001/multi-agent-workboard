@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { getAdapter } from './adapters/index.mjs';
 import { MODES, MODEL_RE } from './adapters/_util.mjs';
 import { spawnCli, isPidRunning, getProject, projectValid } from './dispatch.mjs';
+import { readCodexQuota } from './quota.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runsDir = path.join(root, 'board/runs');
@@ -38,7 +39,8 @@ function resolveModel(def, task, agent) {
 }
 function loadAgentConfig() {
   const config = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
-  return { agents: Array.isArray(config.agents) ? config.agents : [], pools: config.pools && typeof config.pools === 'object' ? config.pools : {} };
+  const threshold = Number(config.quotaThreshold);
+  return { agents: Array.isArray(config.agents) ? config.agents : [], pools: config.pools && typeof config.pools === 'object' ? config.pools : {}, quotaThreshold: Number.isFinite(threshold) && threshold >= 0 && threshold <= 100 ? threshold : 90 };
 }
 const loadAgents = () => loadAgentConfig().agents;
 const loadPools = () => loadAgentConfig().pools;
@@ -242,7 +244,7 @@ function saveCooldowns(cooldowns) {
   catch (e) { console.error(`[engine] agent cooldown 寫入失敗: ${e.message}`); }
 }
 function selectPoolAgent(def, st) {
-  const { agents, pools } = loadAgentConfig();
+  const { agents, pools, quotaThreshold } = loadAgentConfig();
   const cooldowns = loadCooldowns();
   const members = pools[def.pool] || [];
   // A failed member is excluded only while that quota cooldown is active.
@@ -256,6 +258,15 @@ function selectPoolAgent(def, st) {
     if (!agent || agent.enabled === false) { unavailable.push(`${id}: disabled`); continue; }
     if (cooldowns[id]) { unavailable.push(`${id}: cooldown until ${new Date(cooldowns[id].until).toISOString()}`); continue; }
     if (tried.has(id)) { unavailable.push(`${id}: quota exhausted`); continue; }
+    // This is advisory observation only: old or absent rollout data never
+    // blocks work.  It also intentionally does not create a cooldown.
+    if (agent.type === 'codex') {
+      const quota = readCodexQuota(agent.home);
+      if (quota && !quota.stale && quota.primary.usedPercent >= quotaThreshold) {
+        unavailable.push(`${id}: quota ${quota.primary.usedPercent}% until ${new Date(quota.primary.resetsAt).toISOString()}`);
+        continue;
+      }
+    }
     return { agent: id, unavailable };
   }
   return { agent: null, unavailable };

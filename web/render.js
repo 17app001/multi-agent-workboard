@@ -108,7 +108,7 @@ function columnsHtml(cfg, tasks, projects, runStatus, showOldDone = currentShowO
   }).join('');
 }
 
-function agentsListHtml(agents = [], activeAgents = [], usageList = [], cooldowns = {}) {
+function legacyAgentsListHtml(agents = [], activeAgents = [], usageList = [], cooldowns = {}) {
   const now = Date.now();
   return agents.map(a => {
     const active = activeAgents.find(x => x && x.agent === a.id);
@@ -133,6 +133,39 @@ function agentsListHtml(agents = [], activeAgents = [], usageList = [], cooldown
     const todayCost = u && u.found ? num(u.costToday) : 0;
     const isCodex = String(a.type || '').includes('codex') || String(a.id || '').includes('codex');
     return `<div class="agent-card card${isRunning ? ' is-running' : ''}"><div class=row><b>${esc(a.label || a.id)}</b> <span class=mut>${esc(a.id)}</span> <span class=agent-lamp-wrap>${lamp}</span></div>${activityText}<div class=mut>今日用量: ${esc(fmt(todayTokens))} · $${esc(todayCost.toFixed(2))}</div>${isCodex ? '<div class=codex-quota><span class=ptag>Codex 額度</span> <span class=mut>訂閱制預留位</span></div>' : ''}</div>`;
+  }).join('');
+}
+
+function quotaHtml(quota) {
+  if (!quota || !quota.primary || !quota.secondary) return '<div class=codex-quota><span class=ptag>Codex \u984d\u5ea6</span> <span class=mut>\u5c1a\u7121\u984d\u5ea6\u8cc7\u6599</span></div>';
+  const line = (label, item, showReset) => {
+    const used = Math.max(0, Math.min(100, num(item.usedPercent)));
+    const level = used > 95 ? ' quota-danger' : used > 80 ? ' quota-warn' : '';
+    const reset = Number.isFinite(item.resetsAt) ? new Date(item.resetsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+    return `<div class="quota-line${level}"><span>${esc(label)} ${esc(used)}%${showReset ? ` (${esc(reset)} \u91cd\u7f6e)` : ''}</span><span class=quota-track><i style="width:${esc(used.toFixed(1))}%"></i></span></div>`;
+  };
+  return `<div class=codex-quota><span class=ptag>Codex \u984d\u5ea6</span>${quota.stale ? '<span class="mut quota-stale">\u8cc7\u6599\u53ef\u80fd\u904e\u671f</span>' : ''}${line('5 \u5c0f\u6642', quota.primary, true)}${line('\u6bcf\u9031', quota.secondary, false)}</div>`;
+}
+
+// Kept separate from the activity renderer so quota data can fail independently.
+function agentsListHtml(agents = [], activeAgents = [], usageList = [], cooldowns = {}, quotaList = []) {
+  const now = Date.now();
+  return agents.map(a => {
+    const active = activeAgents.find(x => x && x.agent === a.id);
+    const cd = cooldowns && cooldowns[a.id];
+    const isCooldown = cd && Number.isFinite(cd.until) && cd.until > now;
+    const isRunning = Boolean(active);
+    const isDisabled = a.enabled === false;
+    let lamp = '<span class="lamp lamp-idle">idle</span>';
+    let activityText = '';
+    if (isRunning) activityText = `<div class=agent-activity>Task: <b>${esc(active.taskTitle || active.taskId)}</b>${active.step ? ` (${esc(active.step)})` : ''}</div>`;
+    else if (isCooldown) activityText = `<div class="agent-activity warn">Cooldown until ${esc(new Date(cd.until).toLocaleTimeString())} (${esc(cd.reason || 'quota')})</div>`;
+    else if (isDisabled) lamp = '<span class="lamp lamp-disabled">disabled</span>';
+    const u = usageList.find(x => x && x.id === a.id);
+    const quota = quotaList.find(x => x && x.id === a.id)?.quota;
+    const isCodex = a.type === 'codex';
+    const tokenText = u && u.found ? `${esc(fmt(num(u.today)))} · $${esc(num(u.costToday).toFixed(2))}` : '—';
+    return `<div class="agent-card card${isRunning ? ' is-running' : ''}"><div class=row><b>${esc(a.label || a.id)}</b> <span class=mut>${esc(a.id)}</span> <span class=agent-lamp-wrap>${lamp}</span></div>${activityText}<div class=mut>Today: ${tokenText}</div>${isCodex ? quotaHtml(quota) : ''}</div>`;
   }).join('');
 }
 

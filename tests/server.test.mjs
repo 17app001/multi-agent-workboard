@@ -22,7 +22,9 @@ const api = async (p, opts = {}) => {
 
 before(async () => {
   fs.cpSync(path.join(repo, 'tools'), path.join(sandbox, 'tools'), { recursive: true });
-  fs.copyFileSync(path.join(repo, 'agents.json'), path.join(sandbox, 'agents.json'));
+  const config = JSON.parse(fs.readFileSync(path.join(repo, 'agents.json'), 'utf8'));
+  config.agents.forEach(a => { a.home = path.join(sandbox, 'agent-homes', a.id); });
+  fs.writeFileSync(path.join(sandbox, 'agents.json'), JSON.stringify(config));
   fs.mkdirSync(path.join(sandbox, 'board/tasks'), { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'web'), { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'docs'), { recursive: true });
@@ -105,6 +107,17 @@ test('task model is CRLF-safe and agent models endpoint returns declared choices
   assert.ok(Array.isArray(models.json.models));
   assert.equal(models.json.id, 'codex-a');
   assert.equal((await api('/api/agents/nope/models')).status, 404);
+});
+
+test('/api/quota returns only enabled Codex agents and tolerates missing logs', async () => {
+  const file = path.join(sandbox, 'agent-homes', 'codex-a', 'sessions', 'x', 'rollout-fixture.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: 12, resets_at: Math.floor(Date.now() / 1000) + 3600 }, secondary: { used_percent: 34, resets_at: Math.floor(Date.now() / 1000) + 86400 } } } }) + '\n');
+  const r = await api('/api/quota');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.map(x => x.id).sort(), ['codex-a', 'codex-b']);
+  assert.equal(r.json.find(x => x.id === 'codex-a').quota.primary.usedPercent, 12);
+  assert.equal(r.json.find(x => x.id === 'codex-b').quota, null);
 });
 
 const JSON_H = { 'content-type': 'application/json' };
@@ -295,4 +308,3 @@ test('GET /api/activity: 唯讀聚合最近 events、活躍 agents 與 cooldowns
   fs.unlinkSync(path.join(sandbox, 'board/tasks', taskId + '.md'));
   fs.unlinkSync(path.join(sandbox, 'board/runs/agent-cooldown.json'));
 });
-

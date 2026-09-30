@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
+import { readCodexQuota } from './quota.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 import * as engine from './engine.mjs';
 import { buildBriefing, buildWrapUp, writeWrapUp } from './session.mjs';
@@ -322,6 +323,11 @@ http.createServer(async (req, res) => {
 
 
     if (url.pathname === '/api/usage') return send(res, 200, collectUsage(cfg().agents));
+    if (url.pathname === '/api/quota' && req.method === 'GET') {
+      const agents = Array.isArray(cfg().agents) ? cfg().agents : [];
+      return send(res, 200, agents.filter(a => a?.type === 'codex' && a.enabled !== false)
+        .map(a => ({ id: a.id, quota: readCodexQuota(a.home) })));
+    }
     if (url.pathname === '/api/activity' && req.method === 'GET') {
       const events = collectRecentActivities(40);
       const activeRuns = [...listActiveRuns(), ...engine.listActiveRuns()];

@@ -75,6 +75,9 @@ button#add:hover,button[data-run]:hover,button.primary:hover{background:var(--ac
 .agent-status-text{font-size:11px}
 .agent-activity{font-size:12px;margin-top:2px}
 .codex-quota{margin-top:4px;display:flex;align-items:center;gap:6px}
+.quota-line{display:grid;grid-template-columns:max-content minmax(54px,1fr);gap:5px;align-items:center;width:100%;font-size:11px;color:var(--mut)}
+.quota-track{height:5px;background:var(--line);border-radius:99px;overflow:hidden}.quota-track i{display:block;height:100%;background:var(--accent2);border-radius:inherit}
+.quota-warn{color:#b7791f}.quota-warn .quota-track i{background:#d69e2e}.quota-danger{color:var(--danger)}.quota-danger .quota-track i{background:var(--danger)}.quota-stale{color:#b7791f}
 @keyframes breathe{0%{opacity:.4;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}100%{opacity:.4;transform:scale(.92)}}
 .lamp-running{display:inline-block;animation:breathe 1.6s ease-in-out infinite}
 .usage-summary-bar{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-bottom:14px;font-size:13px}
@@ -227,7 +230,7 @@ const api=(p,o={},text=false)=>fetch('/api/'+p,{...o,headers:{'content-type':'ap
 let cfg,tasks=[],projects=[],runStatus={},openLogId=null,userStopping={};
 let openDetailId=null,detailData=null,detailEvents=[],detailArtifacts={},detailRaw='',detailSource=null,detailPoll=null,detailCursor=0;
 let currentView='dashboard',selectedProject='',activeTaskTab='needs-you',isPinnedExpanded=true;
-let activityEvents=[],activeAgents=[],cooldowns={},usageData=[];
+let activityEvents=[],activeAgents=[],cooldowns={},usageData=[],quotaData=[];
 let showOldDone=false;
 try{showOldDone=localStorage.getItem('workboard_show_old_done')==='true'}catch(e){}
 if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
@@ -288,7 +291,7 @@ function renderDashboard(){
 
  $('#needsYouPinned').innerHTML=needsYouPinnedHtml(needsTasks,runStatus,isPinnedExpanded);
  $('#usageSummaryBar').innerHTML=usageSummaryHtml(usageData);
- $('#agentsList').innerHTML=agentsListHtml(cfg?.agents||[],activeAgents,usageData,cooldowns);
+ $('#agentsList').innerHTML=agentsListHtml(cfg?.agents||[],activeAgents,usageData,cooldowns,quotaData);
  $('#tasksPaneContent').innerHTML=tasksPaneHtml(filteredTasks,activeTaskTab,cfg,projects,runStatus);
  $('#activityContent').innerHTML=activityListHtml(activityEvents);
  $('#bigCounterContent').innerHTML=bigCounterOverlayHtml(needsCount,tasks);
@@ -323,8 +326,8 @@ async function load(){
  const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.status});
  const prevRun={};Object.keys(runStatus).forEach(id=>{prevRun[id]=runStatus[id]?.status});
  cfg??=await api('config');
- const [p,t,u,act]=await Promise.all([api('projects'),api('tasks'),api('usage'),api('activity').catch(()=>null)]);
- projects=p;tasks=t;usageData=u;
+ const [p,t,u,act,q]=await Promise.all([api('projects'),api('tasks'),api('usage'),api('activity').catch(()=>null),api('quota').catch(()=>[])]);
+ projects=p;tasks=t;usageData=u;quotaData=Array.isArray(q)?q:[];
  if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}
  if(typeof setShowOldDoneState==='function')setShowOldDoneState(showOldDone);
  render();
@@ -361,6 +364,7 @@ async function refreshActive(){
  if(openLogId)ids.add(openLogId);
  if(ids.size>0){const prevRun={};ids.forEach(id=>{prevRun[id]=runStatus[id]?.status});await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);paintLog()}
  try{const act=await api('activity');if(act){activityEvents=act.events||[];activeAgents=act.activeAgents||[];cooldowns=act.cooldowns||{}}}catch(e){}
+ try{const q=await api('quota');quotaData=Array.isArray(q)?q:quotaData}catch(e){}
  renderDashboard();
 }
 

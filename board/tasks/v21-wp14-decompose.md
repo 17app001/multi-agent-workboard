@@ -1,7 +1,7 @@
 ---
 title: WP14 需求自動拆解(規劃者拆成多張任務卡)
 status: backlog
-agent: codex-b
+agent: agy
 priority: p1
 files: tools/decompose.mjs,tools/server.mjs,pipelines,web,tests
 updated: 2026-09-30

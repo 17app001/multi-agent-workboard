@@ -150,3 +150,14 @@ test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄
   assert.equal([...scripts[0].matchAll(/\bfetch\(/g)].length, 1, '只有 api() 自己呼叫 fetch');
   assert.match(scripts[0], /headers:\{'content-type':'application\/json'/);
 });
+
+test('Codex quota card escapes API data and renders warning, stale, and missing states', () => {
+  const agent = [{ id: 'codex-a', type: 'codex', label: EVIL }];
+  const quota = { id: 'codex-a', quota: { primary: { usedPercent: 81, resetsAt: Date.now() + 1000 }, secondary: { usedPercent: 96, resetsAt: Date.now() + 2000 }, stale: true } };
+  const html = R.agentsListHtml(agent, [], [], {}, [quota]);
+  assertSafe(html, 'quota card');
+  assert.match(html, /quota-warn/);
+  assert.match(html, /quota-danger/);
+  assert.match(html, /quota-stale/);
+  assert.match(R.agentsListHtml(agent, [], [], {}, []), /\u5c1a\u7121\u984d\u5ea6\u8cc7\u6599/);
+});

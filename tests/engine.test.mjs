@@ -847,3 +847,23 @@ test('重啟:running 的 run 若行程已在 server 關閉期間結束,接手時
   const r = await waitStatus(id, 'completed', 15000);
   assert.equal(r.steps[1].status, 'done');
 });
+
+test('pool selection proactively skips fresh Codex quota but allows stale observations', async () => {
+  const quotaFile = agentId => path.join(sandbox, agentId === 'codex-b' ? 'h4' : 'h2', 'sessions', 'x', `rollout-${agentId}.jsonl`);
+  const writeQuota = (agentId, percent, timestamp) => {
+    const file = quotaFile(agentId);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ timestamp, type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: percent, resets_at: Math.floor(Date.now() / 1000) + 3600 }, secondary: { used_percent: 10, resets_at: Math.floor(Date.now() / 1000) + 86400 } } } }) + '\n');
+  };
+  try { fs.unlinkSync(path.join(sandbox, 'board/runs/agent-cooldown.json')); } catch {}
+  writeQuota('codex-b', 95, new Date().toISOString());
+  writeQuota('codex-a', 10, new Date().toISOString());
+  await mkTask('t-proactive-fresh', { pipeline: 'poolplan' });
+  assert.equal((await dispatch('t-proactive-fresh')).status, 200);
+  assert.equal((await waitNeeds('t-proactive-fresh', 'approval')).steps[0].agent, 'codex-a');
+
+  writeQuota('codex-b', 95, new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString());
+  await mkTask('t-proactive-stale', { pipeline: 'poolplan' });
+  assert.equal((await dispatch('t-proactive-stale')).status, 200);
+  assert.equal((await waitNeeds('t-proactive-stale', 'approval')).steps[0].agent, 'codex-b');
+});
