@@ -1,7 +1,7 @@
 ---
 title: WP4 SSE 事件流與 Task Detail 頁(含 UI 核准按鈕)
-status: backlog
-agent: codex-a
+status: review
+agent: codex-b
 priority: p1
 files: tools/server.mjs,web/index.html,web/render.js,web/detail.js,tests/web.test.mjs,tests/server.test.mjs
 updated: 2026-09-30
@@ -46,10 +46,23 @@ updated: 2026-09-30
 - run run-1790726770942 failed: agent 結束碼 1
 
 ## 接手說明(2026-09-30,Claude)
-前一位施工者 codex-a 因**額度用完**中斷(非品質問題)。它已在 `tools/server.mjs` 加了一段 SSE 傳輸層(`terminalRun`/`sseCursor`/`sseWrite`/`streamRun`,約 80 行,語法通過但**未複核、未測試**)。請先 `git diff tools/server.mjs` 看清楚並在此基礎上繼續(可修正它),不要整段重寫;其餘項目(前端 Task Detail、核准按鈕、web/detail.js、render.js、測試)尚未動工。你(agy)是第一次以 accept-edits 模式在本看板施工,遇到權限/工具問題請在 Log 明確記下。
+前一位施工者 codex-a(額度用完) 因**額度用完**中斷(非品質問題)。它已在 `tools/server.mjs` 加了一段 SSE 傳輸層(`terminalRun`/`sseCursor`/`sseWrite`/`streamRun`,約 80 行,語法通過但**未複核、未測試**)。請先 `git diff tools/server.mjs` 看清楚並在此基礎上繼續(可修正它),不要整段重寫;其餘項目(前端 Task Detail、核准按鈕、web/detail.js、render.js、測試)尚未動工。你(codex-b,CODEX_HOME=~/codex-agents/mika,模型 gpt-5.6-terra)接手;遇到權限/工具問題請在 Log 明確記下。
 
 - run run-1790727120906 failed: agent 沒有產生可存成 plan.md 的回覆文字
 
 ### 2026-09-30 中斷紀錄(Claude)
 - codex-a 額度用完(重置約 12:19 PM),已寫入 `tools/server.mjs` 的 SSE 傳輸層(未複核);改派 agy 失敗:**agy headless 會自動拒絕所有 command 權限(連 `Get-ChildItem` 都被拒),plan 步驟得不到回覆**——需要使用者決定:在 agy 的 settings.json `permissions.allow` 加唯讀指令白名單,才能讓 agy 施工。
 - 因此本卡退回 backlog、agent 改回 codex-a;codex 額度恢復後重新派工(先 `git diff tools/server.mjs` 接續),或由 Claude 用 subagent 接手。
+
+- run run-1790728034578 failed: agent 結束碼 1
+
+- run run-1790728041484 需要你處理(approval): step「plan」已完成,需要你核准(或退回並附意見)後才會繼續
+
+- 計畫已核准 (2026-09-30T00:28:44.641Z)
+
+- run run-1790728041484 completed
+
+### 2026-09-30 Claude 複核(施工:codex-b/Mika,接續 codex-a 的 SSE WIP)
+- `npm test` 82/82;`tools/engine.mjs` 未被修改(核准不變式未動);真實 server 上對已完成的 WP4 run 呼叫 `/api/runs/<id>/stream`:snapshot、51 筆 activity(遞增 id)、run、end 皆正確;非法 Host → 403;`/detail.js` 200。
+- `web/detail.js` 所有動態字串經 `detailEsc`;reject 前端強制必填意見(後端亦要求)。
+- **未驗證**:前端未經瀏覽器實際點擊(無自動化);Detail 介面文字為英文,與看板中文不一致(輕微,待統一);核准按鈕的實際流程請使用者在瀏覽器實測一次。

@@ -56,10 +56,12 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .form input,.form textarea{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
 .plist{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;overflow:auto}
 .plist .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.detail-page{max-width:1000px;margin:auto}.detail-page[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h2{font-size:20px;color:var(--fg);margin:10px 0 4px;text-transform:none}.detail-section{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;margin:12px 0;box-shadow:var(--shadow)}.detail-section h3{margin:0 0 10px;font-size:14px}.steps{margin:0;padding-left:22px}.step{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}.step:last-child{border:0}.step-running{color:var(--accent-hover)}.step-done{color:var(--accent2)}.step-failed{color:var(--danger)}.event{padding:7px 0;border-bottom:1px solid var(--line);white-space:pre-wrap}.event:last-child{border:0}.artifacts article{margin:8px 0}.artifacts pre,.raw{max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);padding:10px;border:1px solid var(--line);border-radius:8px}.detail-section textarea{width:100%;box-sizing:border-box;min-height:64px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px}
 </style>
 <h1>Multi-Agent Workboard <button id=add>+ 新任務</button> <button id=projBtn>📂 專案</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
-<div class=usage id=usage></div>
-<h2>看板</h2><div class=cols id=cols></div>
+<main id=boardPage><div class=usage id=usage></div>
+<h2>看板</h2><div class=cols id=cols></div></main>
+<main class=detail-page id=detailPage hidden></main>
 <div class=modal id=logModal hidden>
   <div class=modalbox>
     <div class=modalhead><b id=logTitle>Log</b><span class=mut id=logMeta></span><button id=logClose>✕ 關閉</button></div>
@@ -92,10 +94,12 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
   </div>
 </div>
 <script src=render.js></script>
+<script src=detail.js></script>
 <script>
 // 所有請求都帶 content-type: application/json(server 會拒絕非 JSON 的變更請求,擋 CSRF);esc/fmt/樣板在 render.js
-const $=s=>document.querySelector(s),api=(p,o={})=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>r.json());
+const $=s=>document.querySelector(s),api=(p,o={},text=false)=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>text?r.text():r.json());
 let cfg,tasks=[],projects=[],runStatus={},openLogId=null,userStopping={};
+let openDetailId=null,detailData=null,detailEvents=[],detailArtifacts={},detailRaw='',detailSource=null,detailPoll=null,detailCursor=0;
 function beep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator();const g=ctx.createGain();
  o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(ctx.currentTime+.15);
  setTimeout(()=>{try{ctx.close()}catch(e){}},300)}catch(e){}}
@@ -119,6 +123,13 @@ async function load(){const prevStatus={};tasks.forEach(t=>{prevStatus[t.id]=t.s
  api('usage').then(u=>{$('#usage').innerHTML=u.map(usageCardHtml).join('')})
 }
 function render(){$('#cols').innerHTML=columnsHtml(cfg,tasks,projects,runStatus)}
+function stopDetailStream(){detailSource?.close();detailSource=null;if(detailPoll)clearInterval(detailPoll);detailPoll=null}
+function paintDetail(){if(!openDetailId)return;const task=tasks.find(t=>t.id===openDetailId)||{id:openDetailId};$('#detailPage').innerHTML=detailHtml(detailData,task,detailEvents,detailArtifacts,detailRaw)}
+async function loadDetail(){if(!openDetailId)return;const id=encodeURIComponent(openDetailId);const [detail,legacy]=await Promise.all([api('runs/'+id),api('tasks/'+id+'/log')]);detailData=detail;detailRaw=legacy.content||'';paintDetail()}
+async function pollDetail(){if(!openDetailId)return;try{const id=encodeURIComponent(openDetailId);const [events,detail]=await Promise.all([api('runs/'+id+'/events?since='+detailCursor),api('runs/'+id)]);if(Array.isArray(events)){detailEvents.push(...events);detailCursor+=events.length}detailData=detail;paintDetail()}catch(e){console.warn('detail polling failed',e)}}
+function startDetailStream(){stopDetailStream();if(!openDetailId)return;const id=encodeURIComponent(openDetailId);try{const source=new EventSource('/api/runs/'+id+'/stream?since='+detailCursor);detailSource=source;source.addEventListener('snapshot',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('run',e=>{const x=JSON.parse(e.data);detailData=x;detailCursor=Number(x.cursor)||detailCursor;paintDetail()});source.addEventListener('activity',e=>{detailEvents.push(JSON.parse(e.data));detailCursor++;paintDetail()});source.addEventListener('end',()=>stopDetailStream());source.onerror=()=>{if(detailSource!==source)return;source.close();detailSource=null;detailPoll=setInterval(pollDetail,3000);pollDetail()}}catch(e){detailPoll=setInterval(pollDetail,3000)}}
+async function openDetail(id){openDetailId=id;detailData=null;detailEvents=[];detailArtifacts={};detailRaw='';detailCursor=0;$('#boardPage').hidden=true;$('#detailPage').hidden=false;await loadDetail();await pollDetail();startDetailStream()}
+function closeDetail(){stopDetailStream();openDetailId=null;$('#detailPage').hidden=true;$('#boardPage').hidden=false}
 const post=b=>api('tasks',{method:'POST',body:JSON.stringify(b)}).then(load);
 document.addEventListener('dragstart',e=>e.dataTransfer.setData('id',e.target.dataset?.id||''));
 document.addEventListener('dragover',e=>{if(e.target.closest('.col'))e.preventDefault()});
@@ -137,7 +148,11 @@ async function refreshActive(){const ids=new Set(tasks.filter(t=>t.status==='doi
  if(ids.size===0)return;const prevRun={};ids.forEach(id=>{prevRun[id]=runStatus[id]?.status});
  await Promise.all([...ids].map(fetchLog));checkRunTransitions(prevRun);render();paintLog()}
 document.addEventListener('click',async e=>{
- const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del;
+ const run=e.target.dataset?.run,stop=e.target.dataset?.stop,logId=e.target.dataset?.log,del=e.target.dataset?.del,detailId=e.target.dataset?.detail;
+ if(e.target.matches('[data-detail-back]')){closeDetail();return}
+ if(detailId){openDetail(detailId);return}
+ if(e.target.dataset?.artifact&&openDetailId){const name=e.target.dataset.artifact;try{detailArtifacts[name]=await api('runs/'+encodeURIComponent(openDetailId)+'/artifacts/'+encodeURIComponent(name),{},true);paintDetail()}catch(err){alert(err.message)}return}
+ if(e.target.dataset?.detailAction&&openDetailId){const action=e.target.dataset.detailAction;let endpoint=action,body={};if(action==='reject'){const feedback=$('[data-approval-note]')?.value.trim();if(!feedback){alert('Feedback is required');return}body={feedback}}else if(action==='approve')body={note:$('[data-approval-note]')?.value.trim()||''};else if(['retry','complete','abort'].includes(action)){endpoint='resolve';body={action}}try{const r=await api('runs/'+encodeURIComponent(openDetailId)+'/'+endpoint,{method:'POST',body:JSON.stringify(body)});if(r.error)alert(r.error);await loadDetail();startDetailStream()}catch(err){alert(err.message)}return}
  if(run){const dispatchNow=async force=>{const body=force?{id:run,force:true}:{id:run};const r=await api('dispatch',{method:'POST',body:JSON.stringify(body)});
   if(r.conflict){if(confirm(r.error+'\n\n仍要繼續派工嗎?'))await dispatchNow(true);return}
   if(r.error){alert(r.error)}else{await load();openLog(run)}};

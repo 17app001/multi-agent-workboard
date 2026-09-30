@@ -11,10 +11,14 @@ import { fileURLToPath } from 'node:url';
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const renderSrc = fs.readFileSync(path.join(repo, 'web/render.js'), 'utf8');
 const indexSrc = fs.readFileSync(path.join(repo, 'web/index.html'), 'utf8');
+const detailSrc = fs.readFileSync(path.join(repo, 'web/detail.js'), 'utf8');
 
 const ctx = vm.createContext({});
 vm.runInContext(renderSrc + '\n;this.api = { esc, fmt, usageCardHtml, badgeHtml, projLineHtml, taskCardHtml, columnsHtml, projectOptionsHtml, projectRowHtml };', ctx);
 const R = ctx.api;
+const detailCtx = vm.createContext({ Date, Object });
+vm.runInContext(detailSrc + '\n;this.api = { detailHtml, detailEsc };', detailCtx);
+const D = detailCtx.api;
 
 const IMG = '<img src=x onerror="fetch(\'/api/dispatch\',{method:\'POST\'})">';
 const QUOTE = '" onmouseover="alert(1)" x="';
@@ -91,6 +95,13 @@ test('正常資料仍正確渲染(escape 不破壞顯示)', () => {
   assert.match(html, /class="card t p0"/);
 });
 
+test('Task Detail escapes malicious run, event, artifact, and raw-log data', () => {
+  const html = D.detailHtml({ run: { taskId: EVIL, status: 'needs-you', needsYou: { reason: 'approval', message: EVIL }, steps: [{ id: EVIL, status: EVIL, agent: EVIL }] }, artifacts: [{ name: EVIL, size: EVIL }] }, { title: EVIL, project: EVIL }, [{ ts: EVIL, step: EVIL, kind: EVIL, text: EVIL }], { [EVIL]: EVIL }, EVIL);
+  assertSafe(html, 'detail');
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.match(html, /data-detail-action="approve"/);
+});
+
 test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄位未經 esc 直接插進模板,index.html 用 render.js 的樣板', () => {
   for (const [name, src] of [['render.js', renderSrc], ['index.html', indexSrc]]) {
     const raw = [...src.matchAll(/\$\{\s*(?:t|a|p|c|d|r|x|cfg|task|proj)\.[\w.]+\s*\}/g)].map(m => m[0]);
@@ -102,7 +113,7 @@ test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄
   // 所有 innerHTML 賦值都必須來自 render.js 的樣板函式或固定字串
   const inner = [...indexSrc.matchAll(/innerHTML\s*=\s*([^;\n]+)/g)].map(m => m[1].trim());
   assert.ok(inner.length >= 4);
-  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\))/.test(rhs), 'innerHTML 來源不明: ' + rhs);
+  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
   // index.html 的內嵌腳本語法正確,且所有 fetch 都經過帶 JSON content-type 的 api()
   const scripts = [...indexSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   assert.equal(scripts.length, 1);

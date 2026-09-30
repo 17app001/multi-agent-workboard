@@ -35,9 +35,9 @@
     {
       "id": "codex-b",
       "type": "codex",
-      "label": "Codex B",
-      "enabled": false,
-      "home": "~/.codex-b",
+      "label": "Codex B (Mika, terra)",
+      "enabled": true,
+      "home": "~/codex-agents/mika",
       "args": [
         "exec",
         "-s",

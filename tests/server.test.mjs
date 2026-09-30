@@ -86,7 +86,7 @@ test('/api/config 與 /api/usage 可回應', async () => {
 const port = () => new URL(base).port;
 const rawReq = (method, p, { headers = {}, body } = {}) => new Promise((ok, no) => {
   const req = http.request({ host: '127.0.0.1', port: port(), path: p, method, headers }, res => {
-    let s = ''; res.on('data', c => (s += c)); res.on('end', () => ok({ status: res.statusCode, text: s }));
+    let s = ''; res.on('data', c => (s += c)); res.on('end', () => ok({ status: res.statusCode, text: s, headers: res.headers }));
   });
   req.on('error', no);
   if (body !== undefined) req.write(body);
@@ -192,4 +192,25 @@ test('GET /api/projects:壞 JSON 檔回 {id, valid:false, error},不再悄悄消
   assert.equal(l.find(p => p.id === 'fine').valid, true);
   fs.unlinkSync(path.join(sandbox, 'board/projects/broken.json'));
   fs.unlinkSync(path.join(sandbox, 'board/projects/fine.json'));
+});
+
+test('SSE stream sends snapshot, resumed activity, and terminal end from an isolated run fixture', async () => {
+  const taskId = 'sse-fixture', runId = 'run-1';
+  const dir = path.join(sandbox, 'board/runs', taskId, runId);
+  fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'artifacts', 'plan.md'), '<script>not executed</script>');
+  fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ runId, taskId, pipeline: 'single', status: 'completed', startedAt: '2026-01-01T00:00:00.000Z', endedAt: '2026-01-01T00:00:01.000Z', cursor: 1, steps: [{ id: 'plan', status: 'done' }] }));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), [JSON.stringify({ ts: '2026-01-01T00:00:00.000Z', step: 'plan', kind: 'message', text: 'first' }), JSON.stringify({ ts: '2026-01-01T00:00:01.000Z', step: 'plan', kind: 'end', text: 'second' })].join('\n') + '\n');
+  const all = await rawReq('GET', `/api/runs/${taskId}/stream`);
+  assert.match(all.headers['content-type'], /^text\/event-stream/);
+  assert.match(all.text, /event: snapshot/);
+  assert.match(all.text, /id: 1\nevent: activity[\s\S]*first/);
+  assert.match(all.text, /id: 2\nevent: activity[\s\S]*second/);
+  assert.match(all.text, /event: end/);
+  const resumed = await rawReq('GET', `/api/runs/${taskId}/stream?since=1`);
+  assert.doesNotMatch(resumed.text, /first/);
+  assert.match(resumed.text, /second/);
+  const lastId = await rawReq('GET', `/api/runs/${taskId}/stream`, { headers: { 'last-event-id': '1' } });
+  assert.doesNotMatch(lastId.text, /first/);
+  assert.equal((await rawReq('GET', `/api/runs/${taskId}/stream`, { headers: { host: 'evil.com' } })).status, 403);
 });

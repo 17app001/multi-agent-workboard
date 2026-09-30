@@ -41,6 +41,7 @@ function taskCardHtml(t, cfg, projects, runStatus) {
  ${t.files ? `<div class=mut>📁 ${esc(t.files)}</div>` : ''}
  <div class=row>${t.agent && t.status != 'done' ? `<button data-run="${esc(t.id)}">▶ 派工</button>` : ''}
  ${runStatus[t.id]?.status === 'running' ? `<button class="iconbtn stop" data-stop="${esc(t.id)}">■ 停止</button>` : ''}
+ <button class=iconbtn data-detail="${esc(t.id)}">Detail</button>
  <button class=iconbtn data-log="${esc(t.id)}">📜 log</button>
  <button class="iconbtn danger" data-del="${esc(t.id)}">🗑 刪除</button></div></div>`;
 }
