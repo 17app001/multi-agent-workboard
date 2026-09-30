@@ -162,7 +162,7 @@ test('靜態掃描:index.html / render.js 沒有把 task/project/agent/usage 欄
   // 所有 innerHTML 賦值都必須來自 render.js 的樣板函式或固定字串
   const inner = [...indexSrc.matchAll(/innerHTML\s*=\s*([^;\n]+)/g)].map(m => m[1].trim());
   assert.ok(inner.length >= 4);
-  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|projectFilterOptionsHtml|agentOptionsHtml|modelOptionsHtml|usageSummaryHtml|agentsListHtml|tasksPaneHtml|needsYouPinnedHtml|activityListHtml|bigCounterOverlayHtml|usageData\.map\(usageCardHtml\)|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml|decomposeDraftTableHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
+  for (const rhs of inner) assert.ok(/^(columnsHtml|projectOptionsHtml|pipelineOptionsHtml|projectFilterOptionsHtml|agentOptionsHtml|modelOptionsHtml|usageSummaryHtml|agentsListHtml|tasksPaneHtml|needsYouPinnedHtml|activityListHtml|bigCounterOverlayHtml|usageData\.map\(usageCardHtml\)|u\.map\(usageCardHtml\)|projects\.length\?projects\.map\(projectRowHtml\)|detailHtml|decomposeDraftTableHtml)/.test(rhs), 'innerHTML 來源不明: ' + rhs);
   // index.html 的內嵌腳本語法正確,且所有 fetch 都經過帶 JSON content-type 的 api()
   const scripts = [...indexSrc.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   assert.equal(scripts.length, 1);

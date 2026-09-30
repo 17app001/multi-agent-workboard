@@ -299,3 +299,9 @@ function decomposeDraftTableHtml(draft = [], cfg = { agents: [] }) {
     <th>#</th><th>標題</th><th>目標</th><th>驗收條件</th><th>預計動用檔案</th><th>建議 Agent</th><th>依賴項 (0-based)</th><th>操作</th>
   </tr></thead><tbody>${rows}</tbody></table><div class=row style="margin-top:10px"><button type=button class=iconbtn data-draft-add>＋ 新增任務卡</button></div></div>`;
 }
+
+// 新任務表單的流程下拉:decompose 是需求拆解專用的內部流程,不列出;description 只取前 48 字
+function pipelineOptionsHtml(list = []) {
+  const opts = (Array.isArray(list) ? list : []).filter(p => p && p.valid && p.id !== 'decompose');
+  return '<option value="">(依專案預設;沒有就用 single)</option>' + opts.map(p => '<option value="' + esc(p.id) + '">' + esc(p.id) + ' — ' + esc(String(p.description || '').slice(0, 48)) + '</option>').join('');
+}

@@ -497,8 +497,7 @@ $('#taskClose').onclick=()=>{$('#taskModal').hidden=true};
 let pipelinesData=null;
 async function paintPipelineOptions(){
  try{if(!pipelinesData)pipelinesData=await api('pipelines')}catch{pipelinesData=[]}
- const opts=(Array.isArray(pipelinesData)?pipelinesData:[]).filter(p=>p.valid&&p.id!=='decompose');
- $('#fPipeline').innerHTML='<option value="">(依專案預設;沒有就用 single)</option>'+opts.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.id)+' — '+esc(String(p.description||'').slice(0,48))+'</option>').join('')}
+ $('#fPipeline').innerHTML=pipelineOptionsHtml(pipelinesData)}
 $('#taskSave').onclick=async()=>{const title=$('#fTitle').value.trim();if(!title){showToast('請填寫任務標題','error');$('#fTitle').focus();return}
  await post({title,pipeline:$('#fPipeline').value,agent:$('#fAgent').value,model:$('#fModel').value,project:$('#fProject').value,goal:$('#fGoal').value,acceptance:$('#fAcc').value,files:$('#fFiles').value});$('#taskModal').hidden=true;showToast('任務已建立','info')};
 
