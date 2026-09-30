@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { collectUsage, usageInRange } from './usage.mjs';
 import { getRun, stopRun, listRuns, readLog, listActiveRuns, projectValid } from './dispatch.mjs';
 import * as engine from './engine.mjs';
+import { buildBriefing, buildWrapUp, writeWrapUp } from './session.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tasksDir = path.join(root, 'board/tasks');
@@ -179,6 +180,13 @@ http.createServer(async (req, res) => {
     const denied = guard(req, url.pathname);
     if (denied) return send(res, denied.code, { error: denied.error });
     if (url.pathname === '/api/config') return send(res, 200, cfg());
+    if (url.pathname === '/api/session/briefing' && req.method === 'GET') return send(res, 200, buildBriefing({ root }));
+    if (url.pathname === '/api/session/wrapup' && req.method === 'POST') {
+      const body = await readBody(req);
+      const wrapUp = await buildWrapUp({ root });
+      if (!body.confirm) return send(res, 200, { preview: true, ...wrapUp });
+      return send(res, 200, { preview: false, ...writeWrapUp({ root, wrapUp }) });
+    }
     if (url.pathname === '/api/projects' && req.method === 'GET') return send(res, 200, listProjects());
     if (url.pathname === '/api/projects' && req.method === 'POST') {
       const b = await readBody(req);

@@ -58,7 +58,7 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
 .plist .row{display:flex;align-items:center;gap:8px;justify-content:space-between}
 .detail-page{max-width:1000px;margin:auto}.detail-page[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.detail-head h2{font-size:20px;color:var(--fg);margin:10px 0 4px;text-transform:none}.detail-section{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:12px;margin:12px 0;box-shadow:var(--shadow)}.detail-section h3{margin:0 0 10px;font-size:14px}.steps{margin:0;padding-left:22px}.step{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}.step:last-child{border:0}.step-running{color:var(--accent-hover)}.step-done{color:var(--accent2)}.step-failed{color:var(--danger)}.event{padding:7px 0;border-bottom:1px solid var(--line);white-space:pre-wrap}.event:last-child{border:0}.artifacts article{margin:8px 0}.artifacts pre,.raw{max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);padding:10px;border:1px solid var(--line);border-radius:8px}.detail-section textarea{width:100%;box-sizing:border-box;min-height:64px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:7px}
 </style>
-<h1>Multi-Agent Workboard <button id=add>+ 新任務</button> <button id=projBtn>📂 專案</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
+<h1>Multi-Agent Workboard <button id=sessionBriefing>開工</button> <button id=sessionWrapup>收工</button> <button id=add>+ 新任務</button> <button id=projBtn>📂 專案</button> <button id=notifyBtn>🔔 開啟完成通知</button></h1>
 <main id=boardPage><div class=usage id=usage></div>
 <h2>看板</h2><div class=cols id=cols></div></main>
 <main class=detail-page id=detailPage hidden></main>
@@ -93,8 +93,16 @@ button#add:hover,button[data-run]:hover{background:var(--accent-hover);border-co
     </div>
   </div>
 </div>
+<div class=modal id=sessionModal hidden>
+  <div class=modalbox>
+    <div class=modalhead><b id=sessionTitle>工作階段</b><button id=sessionClose>✕ 關閉</button></div>
+    <div class=mut id=sessionMeta></div><pre id=sessionContent class=raw></pre>
+    <div class=row><button id=sessionConfirm hidden>確認寫入</button></div>
+  </div>
+</div>
 <script src=render.js></script>
 <script src=detail.js></script>
+<script src=session.js></script>
 <script>
 // 所有請求都帶 content-type: application/json(server 會拒絕非 JSON 的變更請求,擋 CSRF);esc/fmt/樣板在 render.js
 const $=s=>document.querySelector(s),api=(p,o={},text=false)=>fetch('/api/'+p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}}).then(r=>text?r.text():r.json());

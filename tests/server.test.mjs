@@ -25,6 +25,9 @@ before(async () => {
   fs.copyFileSync(path.join(repo, 'agents.json'), path.join(sandbox, 'agents.json'));
   fs.mkdirSync(path.join(sandbox, 'board/tasks'), { recursive: true });
   fs.mkdirSync(path.join(sandbox, 'web'), { recursive: true });
+  fs.mkdirSync(path.join(sandbox, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(sandbox, 'docs/worklog-2026-09-30.md'), '# Worklog\n\n## Today completed\n- fixture\n');
+  fs.writeFileSync(path.join(sandbox, 'next-session-handoff.md'), 'Before\n<!-- AUTO:BEGIN -->\nold\n<!-- AUTO:END -->\nAfter\n');
   // Windows 編輯器存的 CRLF 任務檔
   fs.writeFileSync(path.join(sandbox, 'board/tasks/crlf-1.md'),
     '---\r\ntitle: CRLF 任務\r\nstatus: todo\r\nagent: claude\r\npriority: p0\r\nupdated: 2026-01-01\r\n---\r\n\r\n## Log\r\n');
@@ -94,6 +97,26 @@ const rawReq = (method, p, { headers = {}, body } = {}) => new Promise((ok, no) 
 });
 const JSON_H = { 'content-type': 'application/json' };
 const taskExists = id => fs.existsSync(path.join(sandbox, 'board/tasks', id + '.md'));
+
+test('session API follows Host protection and preview does not write a worklog', async () => {
+  assert.equal((await rawReq('GET', '/api/session/briefing', { headers: { host: 'evil.com' } })).status, 403);
+  const preview = await api('/api/session/wrapup', { method: 'POST', body: {} });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.json.preview, true);
+  assert.ok(preview.json.fileName);
+  assert.ok(!fs.existsSync(path.join(sandbox, 'docs', preview.json.fileName)));
+});
+
+test('session wrapup confirmation writes a worklog and updates only the AUTO block', async () => {
+  const before = fs.readFileSync(path.join(sandbox, 'next-session-handoff.md'), 'utf8');
+  const response = await api('/api/session/wrapup', { method: 'POST', body: { confirm: true } });
+  assert.equal(response.status, 200);
+  assert.equal(response.json.preview, false);
+  assert.ok(fs.existsSync(path.join(sandbox, 'docs', response.json.writtenFileName)));
+  const after = fs.readFileSync(path.join(sandbox, 'next-session-handoff.md'), 'utf8');
+  assert.equal(after.slice(0, after.indexOf('<!-- AUTO:BEGIN -->')), before.slice(0, before.indexOf('<!-- AUTO:BEGIN -->')));
+  assert.equal(after.slice(after.indexOf('<!-- AUTO:END -->') + '<!-- AUTO:END -->'.length), before.slice(before.indexOf('<!-- AUTO:END -->') + '<!-- AUTO:END -->'.length));
+});
 
 test('server 只綁 127.0.0.1(::1 連不上;原始碼 listen 有指定 host)', async () => {
   const src = fs.readFileSync(path.join(repo, 'tools/server.mjs'), 'utf8');
